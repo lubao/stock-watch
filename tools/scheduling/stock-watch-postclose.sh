@@ -32,43 +32,40 @@ fi
   # Keep evaluation history updated as older horizons mature.
   "$python_bin" -m stock_watch daily --mode postclose --all-dates --max-days 60
 
-  # Yahoo/TW tickers sometimes lag after close; retry evaluation if today's rows are missing.
+  # Yahoo/TW tickers sometimes lag after close; retry evaluation if the latest snapshot date
+  # still has signal_date_missing rows or has not landed in outcomes yet.
   for attempt in 1 2 3 4; do
-    missing_count="$(
+    probe_output="$(
       "$python_bin" - <<'PY'
-import datetime
-import pandas as pd
-import pytz
+from pathlib import Path
 
-tz = pytz.timezone("Asia/Taipei")
-today = datetime.datetime.now(tz).strftime("%Y-%m-%d")
+from verification.workflows.run_daily_verification import probe_postclose_evaluation_status
 
-try:
-  df = pd.read_csv("runs/verification/watchlist_daily/reco_outcomes.csv")
-except Exception:
-  print(999)
-  raise SystemExit(0)
+probe = probe_postclose_evaluation_status(
+    snapshot_csv=Path("runs/verification/watchlist_daily/reco_snapshots.csv"),
+    outcomes_csv=Path("runs/verification/watchlist_daily/reco_outcomes.csv"),
+)
+status = str(probe.get("status", "")).strip() or "unavailable"
+target_signal_date = str(probe.get("target_signal_date", "")).strip()
+missing_count = int(probe.get("missing_count", 0) or 0)
+detail = str(probe.get("detail", "")).strip().replace("\t", " ")
 
-if df.empty or "status" not in df.columns or "signal_date" not in df.columns:
-  print(999)
-  raise SystemExit(0)
-
-sub = df[df["signal_date"].astype(str) == today]
-if sub.empty:
-  print(999)
-  raise SystemExit(0)
-
-status = sub["status"].astype(str).str.strip()
-print(int((status == "signal_date_missing").sum()))
+print("\t".join([status, target_signal_date, str(missing_count), detail]))
 PY
     )"
+    IFS=$'\t' read -r probe_status target_signal_date missing_count probe_detail <<< "$probe_output"
 
-    if [[ "$missing_count" -eq 0 ]]; then
-      echo "eval_retry=ok attempt=$attempt"
+    if [[ "$probe_status" == "ok" ]]; then
+      echo "eval_retry=ok target_signal_date=${target_signal_date:-unknown} attempt=$attempt"
       break
     fi
 
-    echo "eval_retry=signal_date_missing count=$missing_count attempt=$attempt"
+    if [[ "$probe_status" == "signal_date_missing" ]]; then
+      echo "eval_retry=signal_date_missing target_signal_date=${target_signal_date:-unknown} count=$missing_count attempt=$attempt"
+    else
+      echo "eval_retry=$probe_status target_signal_date=${target_signal_date:-unknown} detail=${probe_detail:-n/a} attempt=$attempt"
+    fi
+
     if [[ "$attempt" -lt 4 ]]; then
       sleep 600
       "$python_bin" -m stock_watch verification daily --mode postclose --all-dates --max-days 60

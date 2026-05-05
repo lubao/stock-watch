@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 from verification.workflows.run_daily_verification import (
     build_evaluate_argv,
     build_feedback_argv,
@@ -13,6 +15,7 @@ from verification.workflows.run_daily_verification import (
     build_verify_argv,
     main,
     parse_args,
+    probe_postclose_evaluation_status,
     should_run_step,
 )
 
@@ -187,3 +190,75 @@ class RunDailyVerificationTests(unittest.TestCase):
             self.assertIn("verify", payload["step_timings"])
             self.assertEqual(payload["cache_stats"]["cache_files"], 1)
             self.assertIn("Verification Runtime Metrics", runtime_md.read_text(encoding="utf-8"))
+
+    def test_probe_postclose_evaluation_status_uses_latest_snapshot_signal_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_csv = root / "reco_snapshots.csv"
+            outcomes_csv = root / "reco_outcomes.csv"
+
+            pd.DataFrame(
+                [
+                    {"signal_date": "2026-05-02", "ticker": "AAA.TW"},
+                    {"signal_date": "2026-05-04", "ticker": "BBB.TW"},
+                ]
+            ).to_csv(snapshot_csv, index=False)
+            pd.DataFrame(
+                [
+                    {"signal_date": "2026-05-04", "status": "ok", "ticker": "BBB.TW"},
+                    {"signal_date": "2026-05-04", "status": "insufficient_forward_data", "ticker": "CCC.TW"},
+                ]
+            ).to_csv(outcomes_csv, index=False)
+
+            probe = probe_postclose_evaluation_status(snapshot_csv=snapshot_csv, outcomes_csv=outcomes_csv)
+
+            self.assertEqual(probe["status"], "ok")
+            self.assertEqual(probe["target_signal_date"], "2026-05-04")
+            self.assertEqual(probe["missing_count"], 0)
+
+    def test_probe_postclose_evaluation_status_detects_missing_rows_for_latest_snapshot_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_csv = root / "reco_snapshots.csv"
+            outcomes_csv = root / "reco_outcomes.csv"
+
+            pd.DataFrame(
+                [
+                    {"signal_date": "2026-05-04", "ticker": "AAA.TW"},
+                ]
+            ).to_csv(snapshot_csv, index=False)
+            pd.DataFrame(
+                [
+                    {"signal_date": "2026-05-03", "status": "ok", "ticker": "AAA.TW"},
+                ]
+            ).to_csv(outcomes_csv, index=False)
+
+            probe = probe_postclose_evaluation_status(snapshot_csv=snapshot_csv, outcomes_csv=outcomes_csv)
+
+            self.assertEqual(probe["status"], "target_rows_missing")
+            self.assertEqual(probe["target_signal_date"], "2026-05-04")
+            self.assertEqual(probe["detail"], "target_signal_date_not_in_outcomes")
+
+    def test_probe_postclose_evaluation_status_counts_signal_date_missing_on_target_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot_csv = root / "reco_snapshots.csv"
+            outcomes_csv = root / "reco_outcomes.csv"
+
+            pd.DataFrame(
+                [
+                    {"signal_date": "2026-05-04", "ticker": "AAA.TW"},
+                ]
+            ).to_csv(snapshot_csv, index=False)
+            pd.DataFrame(
+                [
+                    {"signal_date": "2026-05-04", "status": "signal_date_missing", "ticker": "AAA.TW"},
+                    {"signal_date": "2026-05-04", "status": "ok", "ticker": "BBB.TW"},
+                ]
+            ).to_csv(outcomes_csv, index=False)
+
+            probe = probe_postclose_evaluation_status(snapshot_csv=snapshot_csv, outcomes_csv=outcomes_csv)
+
+            self.assertEqual(probe["status"], "signal_date_missing")
+            self.assertEqual(probe["target_signal_date"], "2026-05-04")
+            self.assertEqual(probe["missing_count"], 1)

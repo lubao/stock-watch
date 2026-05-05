@@ -7,6 +7,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -23,6 +25,74 @@ MODE_STEPS: dict[str, tuple[str, ...]] = {
     "preopen": ("verify",),
     "postclose": ("evaluate", "summary", "feedback"),
 }
+
+
+def _latest_nonempty_signal_date(df) -> str:
+    if df is None or getattr(df, "empty", True) or "signal_date" not in df.columns:
+        return ""
+    non_empty = df["signal_date"].dropna().astype(str).str.strip()
+    non_empty = non_empty[non_empty != ""]
+    if non_empty.empty:
+        return ""
+    return str(non_empty.max())
+
+
+def probe_postclose_evaluation_status(*, snapshot_csv: Path, outcomes_csv: Path) -> dict[str, object]:
+    try:
+        snapshots = pd.read_csv(snapshot_csv, dtype={"signal_date": "string"})
+    except Exception:
+        snapshots = None
+
+    try:
+        outcomes = pd.read_csv(outcomes_csv, dtype={"signal_date": "string", "status": "string"})
+    except Exception:
+        outcomes = None
+
+    latest_snapshot_date = _latest_nonempty_signal_date(snapshots)
+    latest_outcome_date = _latest_nonempty_signal_date(outcomes)
+    target_signal_date = latest_snapshot_date or latest_outcome_date
+
+    if not target_signal_date:
+        return {
+            "status": "unavailable",
+            "target_signal_date": "",
+            "missing_count": 0,
+            "detail": "no_signal_date_found",
+        }
+
+    if outcomes is None or getattr(outcomes, "empty", True) or "status" not in outcomes.columns or "signal_date" not in outcomes.columns:
+        return {
+            "status": "unavailable",
+            "target_signal_date": target_signal_date,
+            "missing_count": 0,
+            "detail": "outcomes_unavailable",
+        }
+
+    subset = outcomes[outcomes["signal_date"].astype(str).str.strip() == target_signal_date].copy()
+    if subset.empty:
+        return {
+            "status": "target_rows_missing",
+            "target_signal_date": target_signal_date,
+            "missing_count": 0,
+            "detail": "target_signal_date_not_in_outcomes",
+        }
+
+    status = subset["status"].fillna("").astype(str).str.strip()
+    missing_count = int((status == "signal_date_missing").sum())
+    if missing_count:
+        return {
+            "status": "signal_date_missing",
+            "target_signal_date": target_signal_date,
+            "missing_count": missing_count,
+            "detail": "",
+        }
+
+    return {
+        "status": "ok",
+        "target_signal_date": target_signal_date,
+        "missing_count": 0,
+        "detail": "",
+    }
 
 
 def _timed_call(step_timings: dict[str, float], name: str, func, *args, **kwargs):
