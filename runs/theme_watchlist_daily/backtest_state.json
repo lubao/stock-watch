@@ -75,6 +75,6 @@
     "3679.TW": "2026-04-07",
     "3592.TW": "2026-04-07"
   },
-  "last_run_mode": "full_rebuild",
-  "last_run_scanned_cutoffs": 62215
+  "last_run_mode": "incremental_noop",
+  "last_run_scanned_cutoffs": 0
 }

@@ -1,0 +1,16 @@
+﻿ticker,name,group,layer,enabled,radar_priority,similar_score,watchlist_reason
+4953.TWO,緯軟,satellite,quality_value,True,A加入觀察,17.8,品質分數高、估值分數高、營收YoY正、ROE>=12%、PE<=18、負債可控
+4995.TWO,晶達,satellite,quality_value,True,A加入觀察,17.72,品質分數高、估值分數高、營收YoY正、ROE>=12%、PE<=18、負債可控
+5288.TW,豐祥-KY,satellite,quality_value,True,A加入觀察,17.35,品質分數高、估值分數高、營收YoY正、ROE>=12%、PE<=18、負債可控
+3008.TW,大立光,satellite,quality_value,True,A加入觀察,16.24,品質分數高、估值分數高、營收YoY正、ROE>=12%、PE<=18、負債可控
+6525.TW,捷敏-KY,satellite,quality_value,True,A加入觀察,16.01,品質分數高、估值合理、營收YoY正、ROE>=12%、PE<=18、負債可控
+8261.TW,富鼎,satellite,quality_value,True,A加入觀察,14.9,品質分數高、估值合理、營收YoY正、ROE>=12%、負債可控
+2441.TW,超豐,satellite,quality_value,True,A加入觀察,14.7,品質分數高、估值合理、營收YoY正、ROE>=12%、負債可控
+4967.TW,十銓,satellite,quality_value,True,B研究追蹤,15.93,估值合理、營收YoY正、ROE>=12%、PE<=18、負債偏高需確認
+6776.TW,展碁國際,satellite,quality_value,True,B研究追蹤,15.92,估值分數高、營收YoY正、ROE>=12%、PE<=18、負債偏高需確認
+3168.TW,眾福科,satellite,quality_value,True,B研究追蹤,15.53,估值分數高、營收YoY正、PE<=18、負債可控
+6201.TW,亞弘電,satellite,quality_value,True,B研究追蹤,15.3,估值分數高、營收YoY正、PE<=18、負債可控
+5490.TWO,同亨,satellite,quality_value,True,B研究追蹤,15.2,估值分數高、ROE>=12%、PE<=18、負債可控
+2617.TW,台航,satellite,quality_value,True,B研究追蹤,15.12,估值分數高、營收YoY正、PE<=18、負債可控
+6751.TWO,智聯服務,satellite,quality_value,True,B研究追蹤,15.07,估值分數高、營收YoY正、PE<=18、負債可控
+7753.TWO,星亞,satellite,quality_value,True,B研究追蹤,14.63,估值分數高、ROE>=12%、PE<=18、負債可控

@@ -45,8 +45,20 @@ ENTRY_PLAN_COLUMNS = [
     "decision_reason",
 ]
 
+SCOUT_WATCHLIST_DRAFT_COLUMNS = [
+    "ticker",
+    "name",
+    "group",
+    "layer",
+    "enabled",
+    "radar_priority",
+    "similar_score",
+    "watchlist_reason",
+]
+
 SIMILAR_SCOUT_INDUSTRIES = {
     "電機機械",
+    "電器電纜",
     "半導體業",
     "電子零組件業",
     "電腦及週邊設備業",
@@ -55,6 +67,9 @@ SIMILAR_SCOUT_INDUSTRIES = {
     "其他電子業",
     "資訊服務業",
     "電子通路業",
+    "汽車工業",
+    "航運業",
+    "貿易百貨",
 }
 TWSE_COMPANY_INFO_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
 TPEX_COMPANY_INFO_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
@@ -99,8 +114,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=True,
         help="Scan adjacent TWSE/TPEx industries for more quality/value names using public fundamentals.",
     )
-    parser.add_argument("--scout-limit", type=int, default=20)
-    parser.add_argument("--scout-candidate-limit", type=int, default=120)
+    parser.add_argument("--scout-limit", type=int, default=30)
+    parser.add_argument("--scout-candidate-limit", type=int, default=300)
+    parser.add_argument("--scout-draft-limit", type=int, default=15)
     return parser.parse_args(argv)
 
 
@@ -439,7 +455,82 @@ def build_similar_scout(
         ),
         axis=1,
     )
-    return scout.sort_values(by=["similar_score", "quality_score", "value_score"], ascending=[False, False, False]).head(output_limit).reset_index(drop=True)
+    scout = _add_scout_priority(scout)
+    return scout.sort_values(
+        by=["radar_sort", "similar_score", "quality_score", "value_score"],
+        ascending=[False, False, False, False],
+    ).head(output_limit).reset_index(drop=True)
+
+
+def _add_scout_priority(scout: pd.DataFrame) -> pd.DataFrame:
+    work = scout.copy()
+    for column in ["quality_score", "value_score", "pe", "pbr", "dividend_yield", "revenue_yoy_pct", "roe_pct", "debt_to_equity_pct"]:
+        work[column] = pd.to_numeric(work.get(column), errors="coerce")
+
+    def _priority(row: pd.Series) -> tuple[str, int, str]:
+        quality = _safe_number(row.get("quality_score"))
+        value = _safe_number(row.get("value_score"))
+        pe = _safe_number(row.get("pe"))
+        revenue_yoy = _safe_number(row.get("revenue_yoy_pct"))
+        roe = _safe_number(row.get("roe_pct"))
+        debt_to_equity = row.get("debt_to_equity_pct")
+        debt_ok = pd.isna(debt_to_equity) or _safe_number(debt_to_equity) <= 120
+        reasons: list[str] = []
+        if quality >= 4:
+            reasons.append("品質分數高")
+        if value >= 4:
+            reasons.append("估值分數高")
+        elif value >= 3:
+            reasons.append("估值合理")
+        if revenue_yoy > 0:
+            reasons.append("營收YoY正")
+        if roe >= 12:
+            reasons.append("ROE>=12%")
+        if pe and pe <= 18:
+            reasons.append("PE<=18")
+        if debt_ok:
+            reasons.append("負債可控")
+        else:
+            reasons.append("負債偏高需確認")
+
+        if quality >= 4 and value >= 3 and revenue_yoy >= 0 and debt_ok and (roe >= 10 or pe <= 16):
+            return "A加入觀察", 3, "、".join(reasons)
+        if (quality >= 4 and value >= 2) or (quality >= 3 and value >= 3):
+            return "B研究追蹤", 2, "、".join(reasons)
+        return "C等待確認", 1, "、".join(reasons) if reasons else "基本面種子，需補技術確認"
+
+    priority_rows = work.apply(_priority, axis=1)
+    work["radar_priority"] = [item[0] for item in priority_rows]
+    work["radar_sort"] = [item[1] for item in priority_rows]
+    work["radar_reason"] = [item[2] for item in priority_rows]
+    return work
+
+
+def build_scout_watchlist_draft(scout: pd.DataFrame, *, limit: int = 12) -> pd.DataFrame:
+    if scout.empty:
+        return pd.DataFrame(columns=SCOUT_WATCHLIST_DRAFT_COLUMNS)
+    work = scout.copy()
+    if "radar_sort" not in work.columns:
+        work = _add_scout_priority(work)
+    work["radar_sort"] = pd.to_numeric(work.get("radar_sort"), errors="coerce").fillna(0)
+    work["similar_score"] = pd.to_numeric(work.get("similar_score"), errors="coerce").fillna(0)
+    work = work[work["radar_priority"].astype(str).isin(["A加入觀察", "B研究追蹤"])].copy()
+    if work.empty:
+        return pd.DataFrame(columns=SCOUT_WATCHLIST_DRAFT_COLUMNS)
+    work = work.sort_values(by=["radar_sort", "similar_score", "ticker"], ascending=[False, False, True]).head(limit)
+    draft = pd.DataFrame(
+        {
+            "ticker": work["ticker"].astype(str),
+            "name": work["name"].astype(str),
+            "group": "satellite",
+            "layer": "quality_value",
+            "enabled": True,
+            "radar_priority": work["radar_priority"].astype(str),
+            "similar_score": work["similar_score"].round(2),
+            "watchlist_reason": work.get("radar_reason", pd.Series(index=work.index, dtype=object)).fillna("").astype(str),
+        }
+    )
+    return draft.reset_index(drop=True)
 
 
 def _format_number(value: object, digits: int = 2) -> str:
@@ -607,19 +698,68 @@ def _similar_scout_table(scout: pd.DataFrame, *, limit: int = 15) -> list[str]:
     if scout.empty:
         return ["- None"]
     lines = [
-        "| Ticker | Name | Industry | Score | Fundamental | Q/V | PE | PBR | Yield | Rev YoY | ROE | Reason |",
-        "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Ticker | Name | Industry | Priority | Score | Fundamental | Q/V | PE | PBR | Yield | Rev YoY | ROE | Reason |",
+        "| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for _, row in scout.head(limit).iterrows():
         lines.append(
             f"| {row.get('ticker', '')} | {row.get('name', '')} | {row.get('industry_category', '')} | "
-            f"{_format_number(row.get('similar_score'))} | {row.get('fundamental_action', '')} | "
+            f"{row.get('radar_priority', '')} | {_format_number(row.get('similar_score'))} | {row.get('fundamental_action', '')} | "
             f"{_format_number(row.get('quality_score'), 0)}/{_format_number(row.get('value_score'), 0)} | "
             f"{_format_number(row.get('pe'))} | {_format_number(row.get('pbr'))} | {_format_with_suffix(row.get('dividend_yield'), '%')} | "
             f"{_format_with_suffix(row.get('revenue_yoy_pct'), '%')} | {_format_with_suffix(row.get('roe_pct'), '%')} | "
-            f"{row.get('scout_reason', '')} |"
+            f"{row.get('radar_reason', '') or row.get('scout_reason', '')} |"
         )
     return lines
+
+
+def _scout_watchlist_draft_table(draft: pd.DataFrame, *, limit: int = 12) -> list[str]:
+    if draft.empty:
+        return ["- None"]
+    lines = [
+        "| Ticker | Name | Priority | Score | Watchlist Row | Reason |",
+        "| --- | --- | --- | ---: | --- | --- |",
+    ]
+    for _, row in draft.head(limit).iterrows():
+        lines.append(
+            f"| {row.get('ticker', '')} | {row.get('name', '')} | {row.get('radar_priority', '')} | "
+            f"{_format_number(row.get('similar_score'))} | "
+            f"`{row.get('ticker', '')},{row.get('name', '')},satellite,quality_value,true` | "
+            f"{row.get('watchlist_reason', '')} |"
+        )
+    return lines
+
+
+def build_scout_notification(scout: pd.DataFrame, *, limit: int = 5) -> str:
+    if scout.empty:
+        return "🔎 類似標的雷達\n今天沒有新的 A/B 級研究種子。"
+    work = scout.copy()
+    if "radar_sort" not in work.columns:
+        work = _add_scout_priority(work)
+    work["radar_sort"] = pd.to_numeric(work.get("radar_sort"), errors="coerce").fillna(0)
+    work["similar_score"] = pd.to_numeric(work.get("similar_score"), errors="coerce").fillna(0)
+    work = work[work["radar_priority"].astype(str).isin(["A加入觀察", "B研究追蹤"])].copy()
+    if work.empty:
+        return "🔎 類似標的雷達\n今天沒有新的 A/B 級研究種子。"
+    work = work.sort_values(by=["radar_sort", "similar_score", "ticker"], ascending=[False, False, True]).head(limit)
+    lines = ["🔎 類似標的雷達", "規則：先加觀察，不自動買；等日線價量確認。"]
+    for _, row in work.iterrows():
+        emoji = "🟢" if str(row.get("radar_priority")) == "A加入觀察" else "🟡"
+        lines.append(
+            f"{emoji} {row.get('name', '')}({row.get('ticker', '')})｜{row.get('radar_priority', '')}｜"
+            f"Score {_format_number(row.get('similar_score'))}｜PE {_format_number(row.get('pe'))}｜"
+            f"殖利率 {_format_with_suffix(row.get('dividend_yield'), '%')}"
+        )
+    return "\n".join(lines)
+
+
+def build_quality_value_notification(entry_plan: pd.DataFrame, scout: pd.DataFrame | None = None) -> str:
+    parts = [build_entry_plan_notification(entry_plan)]
+    if scout is not None:
+        scout_message = build_scout_notification(scout)
+        if scout_message.strip():
+            parts.append(scout_message)
+    return "\n\n".join(parts)
 
 
 def build_entry_plan_notification(entry_plan: pd.DataFrame, *, limit: int = 6) -> str:
@@ -690,7 +830,7 @@ def build_quality_value_report(
     *,
     args: argparse.Namespace,
     generated_at: str,
-) -> tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     low_price = _select_low_price_pool(df_rank, args)
     quality_value = _select_quality_value_pool(df_rank)
     export = pd.concat(
@@ -718,6 +858,7 @@ def build_quality_value_report(
         if bool(args.similar_scout)
         else pd.DataFrame()
     )
+    scout_draft = build_scout_watchlist_draft(scout, limit=int(args.scout_draft_limit))
 
     lines = [
         "# 冷門高品質 / 低價健康 Research",
@@ -754,6 +895,12 @@ def build_quality_value_report(
         "",
         *_similar_scout_table(scout),
         "",
+        "## Watchlist 加入草稿",
+        "",
+        "- 這裡只產生草稿，不會自動改 `watchlist.csv`；A/B 級標的等你決定後再正式加入。",
+        "",
+        *_scout_watchlist_draft_table(scout_draft),
+        "",
         "## 使用方式",
         "",
         "- `優先研究`：價量結構乾淨，值得深入看基本面與買點。",
@@ -762,7 +909,7 @@ def build_quality_value_report(
         "- `過熱先等`：先看不碰，等熱度退或重新整理。",
         "",
     ]
-    return "\n".join(lines), export, fundamentals, entry_plan, scout
+    return "\n".join(lines), export, fundamentals, entry_plan, scout, scout_draft
 
 
 def _write_metrics(
@@ -774,6 +921,7 @@ def _write_metrics(
     quality_value_rows: int,
     fundamental_rows: int,
     scout_rows: int,
+    scout_draft_rows: int,
     wall_seconds: float,
 ) -> None:
     payload = {
@@ -784,6 +932,7 @@ def _write_metrics(
         "quality_value_rows": int(quality_value_rows),
         "fundamental_rows": int(fundamental_rows),
         "scout_rows": int(scout_rows),
+        "scout_draft_rows": int(scout_draft_rows),
         "wall_seconds": round(wall_seconds, 3),
     }
     outdir.mkdir(parents=True, exist_ok=True)
@@ -799,6 +948,7 @@ def _write_metrics(
                 f"- Quality-value rows: `{quality_value_rows}`",
                 f"- Fundamental rows: `{fundamental_rows}`",
                 f"- Similar scout rows: `{scout_rows}`",
+                f"- Similar scout draft rows: `{scout_draft_rows}`",
                 f"- Wall-clock seconds: `{wall_seconds:.3f}`",
             ]
         ),
@@ -817,7 +967,7 @@ def main(argv: list[str] | None = None) -> int:
 
     df_rank = _prepare_rank(rank_csv)
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    markdown, export, fundamentals, entry_plan, scout = build_quality_value_report(df_rank, args=args, generated_at=generated_at)
+    markdown, export, fundamentals, entry_plan, scout, scout_draft = build_quality_value_report(df_rank, args=args, generated_at=generated_at)
 
     outdir.mkdir(parents=True, exist_ok=True)
     report_md = outdir / "quality_value_report.md"
@@ -825,6 +975,7 @@ def main(argv: list[str] | None = None) -> int:
     fundamentals_csv = outdir / "quality_value_fundamentals.csv"
     entry_plan_csv = outdir / "quality_value_entry_plan.csv"
     scout_csv = outdir / "quality_value_similar_scout.csv"
+    scout_draft_csv = outdir / "quality_value_watchlist_draft.csv"
     report_md.write_text(markdown, encoding="utf-8")
 
     export_cols = [
@@ -871,6 +1022,7 @@ def main(argv: list[str] | None = None) -> int:
     entry_plan.to_csv(entry_plan_csv, index=False, encoding="utf-8-sig")
     if not scout.empty:
         scout.to_csv(scout_csv, index=False, encoding="utf-8-sig")
+    scout_draft.to_csv(scout_draft_csv, index=False, encoding="utf-8-sig")
 
     low_price_rows = int((export.get("bucket", pd.Series(dtype=str)) == "low_price_health").sum())
     quality_value_rows = int((export.get("bucket", pd.Series(dtype=str)) == "quality_value_research").sum())
@@ -883,6 +1035,7 @@ def main(argv: list[str] | None = None) -> int:
         quality_value_rows=quality_value_rows,
         fundamental_rows=len(fundamentals),
         scout_rows=len(scout),
+        scout_draft_rows=len(scout_draft),
         wall_seconds=wall_seconds,
     )
 
@@ -894,6 +1047,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"- entry_plan: {entry_plan_csv}")
     if not scout.empty:
         print(f"- similar_scout: {scout_csv}")
+    print(f"- watchlist_draft: {scout_draft_csv}")
     print(f"- rows: {len(export)}")
     print(f"- wall_seconds: {wall_seconds:.3f}")
     return 0

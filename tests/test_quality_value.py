@@ -254,6 +254,91 @@ class QualityValueReportTests(unittest.TestCase):
         self.assertIn("🔴 技嘉(2376.TW)", message)
         self.assertIn("買區 426.14–439.50", message)
 
+    def test_scout_watchlist_draft_keeps_only_a_b_priority(self) -> None:
+        scout = pd.DataFrame(
+            [
+                {
+                    "ticker": "5288.TW",
+                    "name": "豐祥-KY",
+                    "quality_score": 4,
+                    "value_score": 4,
+                    "similar_score": 17.35,
+                    "pe": 14.05,
+                    "dividend_yield": 3.8,
+                    "revenue_yoy_pct": 23.0,
+                    "roe_pct": 16.3,
+                    "debt_to_equity_pct": 33.2,
+                },
+                {
+                    "ticker": "5490.TWO",
+                    "name": "同亨",
+                    "quality_score": 3,
+                    "value_score": 4,
+                    "similar_score": 15.25,
+                    "pe": 17.22,
+                    "dividend_yield": 5.44,
+                    "revenue_yoy_pct": -11.65,
+                    "roe_pct": 18.3,
+                    "debt_to_equity_pct": 32.1,
+                },
+                {
+                    "ticker": "9999.TW",
+                    "name": "等待股",
+                    "quality_score": 2,
+                    "value_score": 2,
+                    "similar_score": 9.0,
+                    "pe": 20.0,
+                    "dividend_yield": 2.0,
+                    "revenue_yoy_pct": -5.0,
+                    "roe_pct": 5.0,
+                    "debt_to_equity_pct": 80.0,
+                },
+            ]
+        )
+
+        draft = quality_value.build_scout_watchlist_draft(scout)
+
+        self.assertEqual(draft["ticker"].tolist(), ["5288.TW", "5490.TWO"])
+        self.assertEqual(draft.iloc[0]["radar_priority"], "A加入觀察")
+        self.assertEqual(draft.iloc[0]["layer"], "quality_value")
+
+    def test_combined_notification_includes_similar_scout(self) -> None:
+        entry_plan = pd.DataFrame(
+            [
+                {
+                    "ticker": "3034.TW",
+                    "name": "聯詠",
+                    "decision_priority": 29.5,
+                    "entry_bias": "分批試單",
+                    "buy_zone_low": 426.14,
+                    "buy_zone_high": 439.5,
+                    "stop_loss": 406.5,
+                }
+            ]
+        )
+        scout = pd.DataFrame(
+            [
+                {
+                    "ticker": "5288.TW",
+                    "name": "豐祥-KY",
+                    "quality_score": 4,
+                    "value_score": 4,
+                    "similar_score": 17.35,
+                    "pe": 14.05,
+                    "dividend_yield": 3.8,
+                    "revenue_yoy_pct": 23.0,
+                    "roe_pct": 16.3,
+                    "debt_to_equity_pct": 33.2,
+                }
+            ]
+        )
+
+        message = quality_value.build_quality_value_notification(entry_plan, scout)
+
+        self.assertIn("品質價值買點雷達", message)
+        self.assertIn("類似標的雷達", message)
+        self.assertIn("豐祥-KY(5288.TW)", message)
+
 
 if __name__ == "__main__":
     unittest.main()
