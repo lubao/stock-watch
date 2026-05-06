@@ -156,6 +156,47 @@ class QualityValueReportTests(unittest.TestCase):
         self.assertIn("品質價值優先", report)
         self.assertEqual(candidates.iloc[0]["fundamental_action"], "品質價值優先")
 
+    def test_main_deduplicates_low_price_research_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            rank_csv = root / "daily_rank.csv"
+            outdir = root / "out"
+            pd.DataFrame(
+                [
+                    {
+                        "rank": 1,
+                        "ticker": "5299.TWO",
+                        "name": "杰力",
+                        "group": "satellite",
+                        "layer": "quality_value",
+                        "close": 90.0,
+                        "ret20_pct": 12.0,
+                        "volume_ratio20": 1.0,
+                        "ma20": 86.0,
+                        "ma60": 82.0,
+                        "setup_score": 9,
+                        "risk_score": 1,
+                        "spec_risk_score": 0,
+                        "spec_risk_label": "正常",
+                        "signals": "TREND",
+                        "score_band": "進攻優勢區",
+                        "atr_pct": 3.0,
+                    }
+                ]
+            ).to_csv(rank_csv, index=False)
+
+            code = quality_value.main(
+                ["--rank-csv", str(rank_csv), "--outdir", str(outdir), "--no-fundamentals", "--no-similar-scout"]
+            )
+
+            candidates = pd.read_csv(outdir / "quality_value_candidates.csv")
+            entry_plan = pd.read_csv(outdir / "quality_value_entry_plan.csv")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(candidates["ticker"].tolist(), ["5299.TWO"])
+        self.assertEqual(entry_plan["ticker"].tolist(), ["5299.TWO"])
+        self.assertEqual(candidates.iloc[0]["bucket"], "low_price_health")
+
     def test_entry_plan_separates_priority_pullback_and_overheated(self) -> None:
         rows = pd.DataFrame(
             [

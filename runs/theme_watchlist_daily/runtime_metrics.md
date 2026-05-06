@@ -1,5 +1,5 @@
 # Runtime Metrics
-- Generated: 2026-05-06 19:47:05
+- Generated: 2026-05-06 20:57:43
 - Status: `ok`
 
 ## Steps
@@ -11,17 +11,17 @@
 | cache_warmup | 0.0001 |
 | watchlist | 0.0000 |
 | backtest | 0.0000 |
-| candidate_sets | 0.0423 |
+| candidate_sets | 0.0433 |
 | reports | 0.0001 |
-| shadow_observation | 0.0036 |
+| shadow_observation | 0.0029 |
 | alert_tracking | 0.0001 |
 | should_alert | 0.0000 |
-| notifications | 0.1298 |
+| notifications | 0.1345 |
 | persist_state | 0.0001 |
 | persist_success | 0.0001 |
 
-- Total tracked seconds: `0.176`
-- Wall-clock seconds: `0.178`
+- Total tracked seconds: `0.181`
+- Wall-clock seconds: `0.183`
 
 ## Cache
 

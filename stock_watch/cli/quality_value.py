@@ -833,6 +833,9 @@ def build_quality_value_report(
 ) -> tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     low_price = _select_low_price_pool(df_rank, args)
     quality_value = _select_quality_value_pool(df_rank)
+    if not low_price.empty and "_base" in quality_value.columns:
+        low_price_bases = set(low_price["_base"].astype(str))
+        quality_value = quality_value[~quality_value["_base"].astype(str).isin(low_price_bases)].reset_index(drop=True)
     export = pd.concat(
         [
             low_price.assign(bucket="low_price_health"),
@@ -840,7 +843,7 @@ def build_quality_value_report(
         ],
         ignore_index=True,
     )
-    export = export.drop_duplicates(subset=["bucket", "_base"], keep="first")
+    export = export.drop_duplicates(subset=["_base"], keep="first")
     fundamentals = _fetch_fundamentals(
         export,
         enabled=bool(args.fundamentals),
