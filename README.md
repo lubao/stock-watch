@@ -145,7 +145,7 @@ Weekly / maintenance：
 - 如果 env 沒設，會改讀本機 `chat_ids`。
 - `chat_ids` 可一行一個 id，或用逗號分隔。
 - `python -m stock_watch daily` 會先用 `STOCK_WATCH_LOCAL_TELEGRAM_CHAT_IDS`，再 fallback 到 `TELEGRAM_CHAT_IDS`，最後才預設只送到 `7758949915`；可用 `--local-telegram-chat-ids` 覆寫。
-- GitHub Actions 手動跑 `stock-watch` 時，可填 `telegram_chat_ids` input，只覆寫該次通知收件人，且會自動 bypass 當日重複執行 guard；留空就用 `TELEGRAM_CHAT_IDS` secret。
+- GitHub Actions 手動跑或重跑 `stock-watch` 時，會固定 bypass 當日重複執行 guard 並送完整通知；可填 `telegram_chat_ids` input 覆寫該次收件人，留空就用 `TELEGRAM_CHAT_IDS` secret 的完整清單。
 
 如果要保留 `chat_id` 和使用者對照表：
 
