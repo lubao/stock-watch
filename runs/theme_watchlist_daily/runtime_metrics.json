@@ -1,24 +1,24 @@
 {
-  "generated_at": "2026-05-07 18:22:52",
+  "generated_at": "2026-05-07 18:33:41",
   "status": "ok",
   "step_timings": {
-    "market_regime": 0.2809175710000318,
-    "us_market": 0.6547642939999605,
-    "cache_warmup": 21.712203391999992,
-    "watchlist": 0.3210151220000057,
-    "backtest": 23.889610113999993,
-    "candidate_sets": 0.22503404500002944,
-    "reports": 0.5867820850000385,
-    "shadow_observation": 0.008336165000002893,
-    "alert_tracking": 0.051521273000048495,
-    "should_alert": 1.3520000265998533e-06,
-    "notifications": 10.587965918000009,
-    "persist_state": 0.00018768199998930868,
-    "persist_success": 0.00016981499999246807
+    "market_regime": 0.5585428360000009,
+    "us_market": 1.6663263169999993,
+    "cache_warmup": 37.460464036999994,
+    "watchlist": 0.4102075299999939,
+    "backtest": 31.304183311999992,
+    "candidate_sets": 0.1618625110000096,
+    "reports": 0.45150782999999706,
+    "shadow_observation": 0.010304355999977588,
+    "alert_tracking": 0.06648961900000927,
+    "should_alert": 1.7130000173892768e-06,
+    "notifications": 2.2005947499999934,
+    "persist_state": 0.00020297600002550098,
+    "persist_success": 0.0002461409999909847
   },
   "warnings": [],
-  "total_seconds": 58.319,
-  "wall_seconds": 58.342,
+  "total_seconds": 74.291,
+  "wall_seconds": 74.322,
   "cache_stats": {
     "history_hit": 0,
     "history_disk_hit": 0,
@@ -29,7 +29,7 @@
     "indicator_miss": 98
   },
   "backtest_meta": {
-    "signature": "f6ade92074161c66",
+    "signature": "b8abb815cc170cd2",
     "backtest_period": "5y",
     "lookahead_days": [
       1,

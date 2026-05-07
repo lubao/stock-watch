@@ -1,5 +1,5 @@
 # Quality Value Candidate Review
-- Generated: 2026-05-07 10:23:11
+- Generated: 2026-05-07 10:34:07
 - Decision point: choose which A-grade candidates to add to the quality-value watchlist.
 
 ## Needs Decision
