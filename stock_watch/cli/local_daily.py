@@ -230,25 +230,34 @@ def send_quality_value_notification(
 
 
 def build_action_summary_notification(metrics: dict[str, object]) -> str:
-    def _line(label: str, key: str) -> str:
+    def _section(label: str, key: str) -> list[str]:
         values = metrics.get(key, [])
         if not isinstance(values, list):
             values = []
-        return f"{label}{', '.join(str(value) for value in values[:5])}"
+        visible_values = [str(value) for value in values[:5] if str(value).strip()]
+        if not visible_values:
+            return []
+        return [label, *[f"• {value}" for value in visible_values]]
 
     sections = [
-        _line("🟢 可試單：", "action_trial_tickers"),
-        _line("🟡 等拉回：", "action_pullback_tickers"),
-        _line("🔵 等轉強：", "action_wait_strength_tickers"),
-        _line("🔴 過熱先等：", "action_cooldown_tickers"),
-        _line("🆕 新A追蹤：", "new_addition_action_tickers"),
-        _line("🧪 試單追蹤：", "trial_ledger_action_tickers"),
-        _line("💼 持股落袋：", "portfolio_trim_tickers"),
+        _section("🟢 可試單", "action_trial_tickers"),
+        _section("🟡 等拉回", "action_pullback_tickers"),
+        _section("🔵 等轉強", "action_wait_strength_tickers"),
+        _section("🔴 過熱先等", "action_cooldown_tickers"),
+        _section("🆕 新A追蹤", "new_addition_action_tickers"),
+        _section("🧪 試單追蹤", "trial_ledger_action_tickers"),
+        _section("💼 持股落袋", "portfolio_trim_tickers"),
     ]
-    visible_sections = [line for line in sections if not line.endswith("：")]
+    visible_sections: list[str] = []
+    for section in sections:
+        if not section:
+            continue
+        if visible_sections:
+            visible_sections.append("")
+        visible_sections.extend(section)
     if not visible_sections:
         visible_sections = ["今天沒有新的試單 / 拉回 / 落袋動作。"]
-    return "\n".join(["📌 今日動作摘要", *visible_sections])
+    return "\n".join(["📌 今日動作摘要", "", *visible_sections])
 
 
 def _count_csv_rows(path: Path) -> int:
