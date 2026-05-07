@@ -1,9 +1,4 @@
 ﻿ticker,name,group,layer,enabled,radar_priority,similar_score,watchlist_reason
-3213.TWO,茂訊,satellite,quality_value,True,A加入觀察,19.54,品質分數高、估值分數高、營收YoY正、ROE>=12%、PE<=18、負債可控
-3158.TWO,嘉實,satellite,quality_value,True,A加入觀察,19.15,品質分數高、估值分數高、營收YoY正、ROE>=12%、PE<=18、負債可控
-6996.TWO,力領科技,satellite,quality_value,True,A加入觀察,18.22,品質分數高、估值分數高、營收YoY正、ROE>=12%、PE<=18、負債可控
-3556.TWO,禾瑞亞,satellite,quality_value,True,A加入觀察,16.33,品質分數高、估值合理、營收YoY正、ROE>=12%、負債可控
-6292.TWO,迅德,satellite,quality_value,True,A加入觀察,16.26,品質分數高、估值合理、營收YoY正、ROE>=12%、負債可控
 2414.TW,精技,satellite,quality_value,True,B研究追蹤,17.52,估值分數高、營收YoY正、ROE>=12%、PE<=18、負債偏高需確認
 3029.TW,零壹,satellite,quality_value,True,B研究追蹤,16.37,估值分數高、營收YoY正、ROE>=12%、PE<=18、負債偏高需確認
 3033.TW,威健,satellite,quality_value,True,B研究追蹤,16.14,估值分數高、營收YoY正、ROE>=12%、PE<=18、負債偏高需確認

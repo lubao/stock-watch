@@ -1,16 +1,10 @@
 # Quality Value Candidate Review
-- Generated: 2026-05-07 15:27:52
+- Generated: 2026-05-07 15:31:07
 - Decision point: choose which A-grade candidates to add to the quality-value watchlist.
 
 ## Needs Decision
 
-| Ticker | Name | Priority | Score | Reason |
-| --- | --- | --- | --- | --- |
-| 3213.TWO | 茂訊 | A加入觀察 | 19.54 | A 級品質價值候選；待你決策是否加入 watchlist |
-| 3158.TWO | 嘉實 | A加入觀察 | 19.15 | A 級品質價值候選；待你決策是否加入 watchlist |
-| 6996.TWO | 力領科技 | A加入觀察 | 18.22 | A 級品質價值候選；待你決策是否加入 watchlist |
-| 3556.TWO | 禾瑞亞 | A加入觀察 | 16.33 | A 級品質價值候選；待你決策是否加入 watchlist |
-| 6292.TWO | 迅德 | A加入觀察 | 16.26 | A 級品質價值候選；待你決策是否加入 watchlist |
+- None
 
 ## Hold For Confirmation
 

@@ -1,5 +1,5 @@
 {
-  "signature": "09e1f25cd2edde18",
+  "signature": "c8afaac5cd5a7f15",
   "backtest_period": "5y",
   "lookahead_days": [
     1,
@@ -94,8 +94,13 @@
     "4966.TWO": "2026-04-08",
     "5203.TW": "2026-04-08",
     "5299.TWO": "2026-04-08",
-    "3515.TW": "2026-04-08"
+    "3515.TW": "2026-04-08",
+    "3213.TWO": "2026-04-08",
+    "3158.TWO": "2026-04-08",
+    "6996.TWO": "2026-04-08",
+    "3556.TWO": "2026-04-08",
+    "6292.TWO": "2026-04-08"
   },
-  "last_run_mode": "incremental_noop",
-  "last_run_scanned_cutoffs": 0
+  "last_run_mode": "full_rebuild",
+  "last_run_scanned_cutoffs": 85309
 }
