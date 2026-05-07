@@ -4,7 +4,6 @@
 8261.TW,富鼎,quality_value_research,26.5,分批試單,120.72,128.0,110.21,第一筆 1/3；突破前高且未爆量再加 1/3,跌破停損或出現 SURGE+爆量失衡先減,technical=優先研究、fundamental=品質價值優先、Q/V=4/3
 3515.TW,華擎,quality_value_research,26.0,等拉回,236.04,243.01,220.72,回到買區後若守住 MA20，第二天轉強再加,跌破買區下緣或放量轉弱先撤,technical=等拉回確認、fundamental=品質價值優先、Q/V=5/4、PULLBACK
 3213.TWO,茂訊,quality_value_research,25.0,分批試單,111.92,114.5,106.42,第一筆 1/3；突破前高且未爆量再加 1/3,跌破停損或出現 SURGE+爆量失衡先減,technical=優先研究、fundamental=品質價值優先、Q/V=4/4
-4966.TWO,譜瑞-KY,quality_value_research,25.0,等拉回,564.9,593.14,518.68,回到買區後若守住 MA20，第二天轉強再加,跌破買區下緣或放量轉弱先撤,technical=等拉回確認、fundamental=品質價值優先、Q/V=4/4
 3008.TW,大立光,quality_value_research,24.0,等轉強,2570.0,2628.71,2381.62,收盤站回 MA20 且量能回到 0.8–1.4 倍，再開第一筆,未站回 MA20 前不加碼；跌破停損直接退出觀察單,technical=觀察轉強、fundamental=品質價值優先、Q/V=4/4
 3158.TWO,嘉實,quality_value_research,24.0,等轉強,90.21,90.89,87.25,收盤站回 MA20 且量能回到 0.8–1.4 倍，再開第一筆,未站回 MA20 前不加碼；跌破停損直接退出觀察單,technical=觀察轉強、fundamental=品質價值優先、Q/V=4/4、PULLBACK
 3005.TW,神基,quality_value_research,23.0,等轉強,98.67,99.73,95.5,收盤站回 MA20 且量能回到 0.8–1.4 倍，再開第一筆,未站回 MA20 前不加碼；跌破停損直接退出觀察單,technical=觀察轉強、fundamental=品質價值優先、Q/V=4/4、PULLBACK
@@ -22,6 +21,7 @@
 2450.TW,神腦,quality_value_research,20.5,等轉強,29.91,30.12,29.29,收盤站回 MA20 且量能回到 0.8–1.4 倍，再開第一筆,未站回 MA20 前不加碼；跌破停損直接退出觀察單,technical=觀察轉強、fundamental=品質價值優先、Q/V=4/3
 3556.TWO,禾瑞亞,quality_value_research,20.5,等轉強,50.89,52.41,45.88,收盤站回 MA20 且量能回到 0.8–1.4 倍，再開第一筆,未站回 MA20 前不加碼；跌破停損直接退出觀察單,technical=觀察轉強、fundamental=品質價值優先、Q/V=4/3
 2347.TW,聯強,quality_value_research,20.0,等轉強,82.56,83.71,75.79,收盤站回 MA20 且量能回到 0.8–1.4 倍，再開第一筆,未站回 MA20 前不加碼；跌破停損直接退出觀察單,technical=觀察轉強、fundamental=品質價值優先、Q/V=4/4
+4966.TWO,譜瑞-KY,quality_value_research,20.0,等拉回,564.9,593.14,518.68,回到買區後若守住 MA20，第二天轉強再加,跌破買區下緣或放量轉弱先撤,technical=等拉回確認、fundamental=可研究但需確認、Q/V=3/4
 6751.TWO,智聯服務,quality_value_research,20.0,暫不急,51.69,51.0,49.88,只追蹤，不主動建立部位,訊號改善前不處理,technical=暫不急、fundamental=品質價值優先、Q/V=4/4、PULLBACK
 6292.TWO,迅德,quality_value_research,19.5,等拉回,47.9,49.83,44.27,回到買區後若守住 MA20，第二天轉強再加,跌破買區下緣或放量轉弱先撤,technical=等拉回確認、fundamental=品質價值優先、Q/V=4/3
 2374.TW,佳能,low_price_health,19.0,研究試單,76.19,79.7,71.09,第一筆 1/3；突破前高且未爆量再加 1/3,跌破停損或出現 SURGE+爆量失衡先減,technical=優先研究、fundamental=品質觀察、Q/V=3/0

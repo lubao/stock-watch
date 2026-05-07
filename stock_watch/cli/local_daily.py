@@ -39,6 +39,9 @@ QUALITY_VALUE_TRACKING_CSV = THEME_OUTDIR / "quality_value_tracking.csv"
 QUALITY_VALUE_PRUNING_MD = THEME_OUTDIR / "quality_value_pruning_report.md"
 QUALITY_VALUE_CANDIDATE_REVIEW_CSV = THEME_OUTDIR / "quality_value_candidate_review.csv"
 QUALITY_VALUE_CANDIDATE_REVIEW_MD = THEME_OUTDIR / "quality_value_candidate_review.md"
+QUALITY_VALUE_NEW_ADDITIONS_TRACKING_CSV = THEME_OUTDIR / "quality_value_new_additions_tracking.csv"
+QUALITY_VALUE_NEW_ADDITIONS_TRACKING_MD = THEME_OUTDIR / "quality_value_new_additions_tracking.md"
+QUALITY_VALUE_NEW_ADDITION_TICKERS = ("3213.TWO", "3158.TWO", "6996.TWO", "3556.TWO", "6292.TWO")
 DEFAULT_LOCAL_TELEGRAM_CHAT_IDS = "7758949915"
 
 MODE_STEPS: dict[str, tuple[str, ...]] = {
@@ -190,12 +193,14 @@ def run_portfolio_step() -> int:
 def send_quality_value_notification(
     entry_plan_csv: Path = QUALITY_VALUE_ENTRY_PLAN_CSV,
     portfolio_report_md: Path = THEME_OUTDIR / "portfolio_report.md",
+    new_additions_tracking_csv: Path = QUALITY_VALUE_NEW_ADDITIONS_TRACKING_CSV,
 ) -> None:
-    if not entry_plan_csv.exists() and not portfolio_report_md.exists():
+    if not entry_plan_csv.exists() and not portfolio_report_md.exists() and not new_additions_tracking_csv.exists():
         return
     metrics = {
         **_collect_quality_value_action_summary(entry_plan_csv),
         **_collect_portfolio_action_summary(portfolio_report_md),
+        **_collect_new_additions_action_summary(new_additions_tracking_csv),
     }
     if not any(metrics.values()):
         return
@@ -221,6 +226,7 @@ def build_action_summary_notification(metrics: dict[str, object]) -> str:
             _line("🟡 等拉回：", "action_pullback_tickers"),
             _line("🔵 等轉強：", "action_wait_strength_tickers"),
             _line("🔴 過熱先等：", "action_cooldown_tickers"),
+            _line("🆕 新A追蹤：", "new_addition_action_tickers"),
             _line("💼 持股落袋：", "portfolio_trim_tickers"),
         ]
     )
@@ -671,6 +677,26 @@ def _collect_portfolio_action_summary(portfolio_report_md: Path) -> dict[str, li
     return {"portfolio_trim_tickers": trim_tickers[:5]}
 
 
+def _collect_new_additions_action_summary(new_additions_tracking_csv: Path) -> dict[str, list[str]]:
+    if not new_additions_tracking_csv.exists():
+        return {"new_addition_action_tickers": []}
+    tracking = _load_csv_safely(new_additions_tracking_csv)
+    if tracking.empty or "next_action" not in tracking.columns:
+        return {"new_addition_action_tickers": []}
+    work = tracking.copy()
+    if "rank" in work.columns:
+        work["_rank"] = pd.to_numeric(work["rank"], errors="coerce").fillna(9999)
+        work = work.sort_values(by=["_rank"], ascending=[True])
+    items: list[str] = []
+    for _, row in work.head(5).iterrows():
+        ticker = str(row.get("ticker", "") or "").strip()
+        name = str(row.get("name", "") or "").strip()
+        action = str(row.get("next_action", "") or "").strip()
+        if ticker:
+            items.append(f"{ticker} {name} {action}".strip())
+    return {"new_addition_action_tickers": items}
+
+
 def _quality_value_current_date(daily_rank: pd.DataFrame) -> str:
     if daily_rank.empty or "date" not in daily_rank.columns:
         return datetime.now().strftime("%Y-%m-%d")
@@ -803,6 +829,162 @@ def write_quality_value_candidate_review(
     return review
 
 
+def _quality_value_zone_status(row: pd.Series) -> str:
+    close = float(pd.to_numeric(pd.Series([row.get("close")]), errors="coerce").fillna(0).iloc[0])
+    low = float(pd.to_numeric(pd.Series([row.get("buy_zone_low")]), errors="coerce").fillna(0).iloc[0])
+    high = float(pd.to_numeric(pd.Series([row.get("buy_zone_high")]), errors="coerce").fillna(0).iloc[0])
+    stop = float(pd.to_numeric(pd.Series([row.get("stop_loss")]), errors="coerce").fillna(0).iloc[0])
+    if stop > 0 and close < stop:
+        return "跌破停損"
+    if low > 0 and high > 0 and low <= close <= high:
+        return "買區內"
+    if high > 0 and close > high:
+        return "買區上方"
+    if low > 0 and close < low:
+        return "買區下方"
+    return "無買區"
+
+
+def _quality_value_heat_status(row: pd.Series) -> str:
+    label = str(row.get("spec_risk_label", "") or "").strip()
+    risk_score = float(pd.to_numeric(pd.Series([row.get("risk_score")]), errors="coerce").fillna(0).iloc[0])
+    volume_ratio = float(pd.to_numeric(pd.Series([row.get("volume_ratio20")]), errors="coerce").fillna(0).iloc[0])
+    if label == "疑似炒作風險高" or risk_score >= 6:
+        return "過熱"
+    if label == "投機偏高" or risk_score >= 3 or volume_ratio >= 2.5:
+        return "偏熱"
+    return "正常"
+
+
+def _quality_value_new_addition_action(row: pd.Series) -> tuple[str, str]:
+    entry_bias = str(row.get("entry_bias", "") or "").strip()
+    zone_status = str(row.get("zone_status", "") or "").strip()
+    heat_status = str(row.get("heat_status", "") or "").strip()
+    if zone_status == "跌破停損":
+        return "移除審核", "已跌破停損線，先退出新加入觀察"
+    if heat_status == "過熱":
+        return "先不追", "投機風險過高，等降溫再看"
+    if entry_bias == "分批試單" and zone_status == "買區內" and heat_status != "過熱":
+        return "可試單", "位於買區且尚未過熱，可做小部位研究單"
+    if entry_bias == "等拉回":
+        return "等拉回", "價格仍高於或尚未穩定落入理想買區"
+    if entry_bias == "等轉強":
+        return "等轉強", "技術條件未完整，等站回關鍵均線與量能確認"
+    if heat_status == "偏熱":
+        return "小心觀察", "量能或風險分數偏熱，不用追"
+    return "續觀察", "條件未惡化，持續追蹤"
+
+
+def _render_new_additions_tracking_markdown(tracking: pd.DataFrame, *, generated_at: str) -> str:
+    lines = [
+        "# Quality Value New Additions Tracking",
+        f"- Generated: {generated_at}",
+        "- Scope: A-grade quality-value names newly added to `watchlist.csv`; track 5/10/20D momentum, buy-zone status, heat risk, and next action.",
+        "",
+        "## Summary",
+        "",
+    ]
+    if tracking.empty:
+        lines.extend(["- No active new additions.", ""])
+        return "\n".join(lines)
+    action_counts = tracking["next_action"].fillna("").astype(str).value_counts().to_dict()
+    lines.append("- Actions: " + ", ".join(f"`{key}`={value}" for key, value in action_counts.items()))
+    lines.append("")
+    lines.extend(
+        [
+            "## Daily Rows",
+            "",
+            "| Ticker | Name | Days | Rank | Close | Since Add | 5D | 10D | 20D | Zone | Heat | Action | Reason |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for _, row in tracking.iterrows():
+        lines.append(
+            f"| {row.get('ticker', '')} | {row.get('name', '')} | {row.get('days_tracked', '')} | {row.get('rank', '')} | "
+            f"{row.get('close', '')} | {row.get('ret_since_add_pct', '')}% | {row.get('ret5_pct', '')}% | "
+            f"{row.get('ret10_pct', '')}% | {row.get('ret20_pct', '')}% | {row.get('zone_status', '')} | "
+            f"{row.get('heat_status', '')} | {row.get('next_action', '')} | {row.get('action_reason', '')} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_quality_value_new_additions_tracking(
+    tracking: pd.DataFrame,
+    *,
+    tracking_csv: Path = QUALITY_VALUE_NEW_ADDITIONS_TRACKING_CSV,
+    tracking_md: Path = QUALITY_VALUE_NEW_ADDITIONS_TRACKING_MD,
+    new_addition_tickers: tuple[str, ...] = QUALITY_VALUE_NEW_ADDITION_TICKERS,
+) -> pd.DataFrame:
+    columns = [
+        "ticker",
+        "name",
+        "added_date",
+        "days_tracked",
+        "added_close",
+        "close",
+        "ret_since_add_pct",
+        "ret5_pct",
+        "ret10_pct",
+        "ret20_pct",
+        "rank",
+        "entry_bias",
+        "buy_zone_low",
+        "buy_zone_high",
+        "stop_loss",
+        "zone_status",
+        "heat_status",
+        "next_action",
+        "action_reason",
+    ]
+    if tracking.empty:
+        result = pd.DataFrame(columns=columns)
+    else:
+        work = tracking[tracking["ticker"].astype(str).isin(new_addition_tickers)].copy()
+        if work.empty:
+            result = pd.DataFrame(columns=columns)
+        else:
+            previous = _load_csv_safely(tracking_csv)
+            last_seen_values = work.get("last_seen_date", pd.Series(dtype=object)).dropna().astype(str).str.strip()
+            last_seen_values = last_seen_values[last_seen_values != ""]
+            current_date = str(last_seen_values.max()) if not last_seen_values.empty else datetime.now().strftime("%Y-%m-%d")
+            if not previous.empty and {"ticker", "added_date", "added_close"}.issubset(set(previous.columns)):
+                previous = previous.drop_duplicates(subset=["ticker"], keep="last")
+                work = work.merge(previous[["ticker", "added_date", "added_close"]], on="ticker", how="left")
+            else:
+                work["added_date"] = ""
+                work["added_close"] = ""
+            work["added_date"] = work["added_date"].fillna("").astype(str)
+            work.loc[work["added_date"].str.strip() == "", "added_date"] = current_date
+            work["added_close"] = pd.to_numeric(work["added_close"], errors="coerce")
+            work["close"] = pd.to_numeric(work["close"], errors="coerce")
+            work["added_close"] = work["added_close"].fillna(work["close"])
+            work["days_tracked"] = work["added_date"].map(lambda value: _days_watched(value, current_date))
+            work["ret_since_add_pct"] = ((work["close"] / work["added_close"] - 1) * 100).round(2)
+            for col in ["ret5_pct", "ret10_pct", "ret20_pct"]:
+                if col not in work.columns:
+                    work[col] = ""
+            work["zone_status"] = work.apply(_quality_value_zone_status, axis=1)
+            work["heat_status"] = work.apply(_quality_value_heat_status, axis=1)
+            actions = work.apply(_quality_value_new_addition_action, axis=1)
+            work["next_action"] = [action for action, _ in actions]
+            work["action_reason"] = [reason for _, reason in actions]
+            for col in columns:
+                if col not in work.columns:
+                    work[col] = ""
+            work["_ticker_order"] = work["ticker"].map({ticker: index for index, ticker in enumerate(new_addition_tickers)}).fillna(999)
+            result = work.sort_values(by=["_ticker_order"])[columns].reset_index(drop=True)
+
+    tracking_csv.parent.mkdir(parents=True, exist_ok=True)
+    tracking_md.parent.mkdir(parents=True, exist_ok=True)
+    result.to_csv(tracking_csv, index=False, encoding="utf-8-sig")
+    tracking_md.write_text(
+        _render_new_additions_tracking_markdown(result, generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        encoding="utf-8",
+    )
+    return result
+
+
 def update_quality_value_tracking(
     *,
     daily_rank_csv: Path = DAILY_RANK_CSV,
@@ -812,7 +994,13 @@ def update_quality_value_tracking(
     pruning_md: Path = QUALITY_VALUE_PRUNING_MD,
     candidate_review_csv: Path = QUALITY_VALUE_CANDIDATE_REVIEW_CSV,
     candidate_review_md: Path = QUALITY_VALUE_CANDIDATE_REVIEW_MD,
+    new_additions_tracking_csv: Path | None = None,
+    new_additions_tracking_md: Path | None = None,
 ) -> pd.DataFrame:
+    if new_additions_tracking_csv is None:
+        new_additions_tracking_csv = tracking_csv.parent / "quality_value_new_additions_tracking.csv"
+    if new_additions_tracking_md is None:
+        new_additions_tracking_md = tracking_csv.parent / "quality_value_new_additions_tracking.md"
     daily_rank = _load_csv_safely(daily_rank_csv)
     if daily_rank.empty:
         tracking = pd.DataFrame(
@@ -826,6 +1014,7 @@ def update_quality_value_tracking(
                 "rank",
                 "close",
                 "ret5_pct",
+                "ret10_pct",
                 "ret20_pct",
                 "volume_ratio20",
                 "setup_score",
@@ -855,6 +1044,7 @@ def update_quality_value_tracking(
             "rank",
             "close",
             "ret5_pct",
+            "ret10_pct",
             "ret20_pct",
             "volume_ratio20",
             "setup_score",
@@ -908,6 +1098,7 @@ def update_quality_value_tracking(
             "rank",
             "close",
             "ret5_pct",
+            "ret10_pct",
             "ret20_pct",
             "volume_ratio20",
             "setup_score",
@@ -931,6 +1122,11 @@ def update_quality_value_tracking(
         encoding="utf-8",
     )
     write_quality_value_candidate_review(draft_csv=draft_csv, review_csv=candidate_review_csv, review_md=candidate_review_md)
+    write_quality_value_new_additions_tracking(
+        tracking,
+        tracking_csv=new_additions_tracking_csv,
+        tracking_md=new_additions_tracking_md,
+    )
     return tracking
 
 
@@ -947,6 +1143,7 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
     spec_risk_metrics = _collect_spec_risk_metrics(daily_rank_csv)
     action_summary = _collect_quality_value_action_summary(theme_outdir / "quality_value_entry_plan.csv")
     portfolio_summary = _collect_portfolio_action_summary(theme_outdir / "portfolio_report.md")
+    new_additions_summary = _collect_new_additions_action_summary(theme_outdir / "quality_value_new_additions_tracking.csv")
     snapshots_df = _load_csv_safely(snapshots_csv)
     outcomes_df = _load_csv_safely(outcomes_csv)
     verification_gate = build_data_quality_gate(outcomes_df, snapshots_df)
@@ -1017,6 +1214,7 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
         "quality_value_scout_rows": int(quality_value_runtime.get("scout_rows", 0) or 0),
         "quality_value_scout_draft_rows": int(quality_value_runtime.get("scout_draft_rows", 0) or 0),
         "quality_value_tracking_rows": _count_csv_rows(theme_outdir / "quality_value_tracking.csv"),
+        "quality_value_new_additions_tracking_rows": _count_csv_rows(theme_outdir / "quality_value_new_additions_tracking.csv"),
         "quality_value_candidate_review_rows": _count_csv_rows(theme_outdir / "quality_value_candidate_review.csv"),
         "quality_value_pruning_status": "ready" if (theme_outdir / "quality_value_pruning_report.md").exists() else "missing",
         "verification_runtime_seconds": float(verification_runtime.get("wall_seconds", 0.0) or 0.0),
@@ -1026,6 +1224,7 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
         "spec_risk_top_tickers": list(spec_risk_metrics["spec_risk_top_tickers"]),
         **action_summary,
         **portfolio_summary,
+        **new_additions_summary,
     }
 
 
@@ -1083,6 +1282,7 @@ def render_local_status_markdown(
             f"- Quality value rows: low-price=`{metrics.get('quality_value_low_price_rows', 0)}`, research=`{metrics.get('quality_value_research_rows', 0)}`, fundamentals=`{metrics.get('quality_value_fundamental_rows', 0)}`",
             f"- Quality value similar scout rows: `{metrics.get('quality_value_scout_rows', 0)}`, draft=`{metrics.get('quality_value_scout_draft_rows', 0)}`",
             f"- Quality value lifecycle rows: tracking=`{metrics.get('quality_value_tracking_rows', 0)}`, candidate_review=`{metrics.get('quality_value_candidate_review_rows', 0)}`, pruning=`{metrics.get('quality_value_pruning_status') or 'missing'}`",
+            f"- Quality value new-addition rows: `{metrics.get('quality_value_new_additions_tracking_rows', 0)}`",
             f"- Quality value runtime: `{metrics.get('quality_value_runtime_seconds', 0.0):.3f}s` ({metrics.get('quality_value_runtime_status') or 'n/a'})"
             + (f", generated `{metrics.get('quality_value_generated_at')}`" if metrics.get("quality_value_generated_at") else ""),
             f"- Verification runtime: `{metrics.get('verification_runtime_seconds', 0.0):.3f}s` ({metrics.get('verification_runtime_status') or 'n/a'})",
@@ -1093,6 +1293,7 @@ def render_local_status_markdown(
             f"- 等拉回: `{', '.join(metrics.get('action_pullback_tickers', [])) or 'n/a'}`",
             f"- 等轉強: `{', '.join(metrics.get('action_wait_strength_tickers', [])) or 'n/a'}`",
             f"- 過熱先等: `{', '.join(metrics.get('action_cooldown_tickers', [])) or 'n/a'}`",
+            f"- 新A追蹤: `{', '.join(metrics.get('new_addition_action_tickers', [])) or 'n/a'}`",
             f"- 持股分批落袋: `{', '.join(metrics.get('portfolio_trim_tickers', [])) or 'n/a'}`",
             "",
             "## Key Outputs",
@@ -1109,6 +1310,7 @@ def render_local_status_markdown(
             f"- Quality value similar scout: `{theme_outdir_str('quality_value_similar_scout.csv')}`",
             f"- Quality value watchlist draft: `{theme_outdir_str('quality_value_watchlist_draft.csv')}`",
             f"- Quality value tracking: `{theme_outdir_str('quality_value_tracking.csv')}`",
+            f"- Quality value new additions tracking: `{theme_outdir_str('quality_value_new_additions_tracking.md')}`",
             f"- Quality value pruning: `{theme_outdir_str('quality_value_pruning_report.md')}`",
             f"- Quality value candidate review: `{theme_outdir_str('quality_value_candidate_review.md')}`",
             f"- Verification report: `{verification_outdir_str('verification_report.md')}`",
@@ -1166,6 +1368,8 @@ def write_local_status_dashboard(
             "quality_value_similar_scout": str(theme_outdir / "quality_value_similar_scout.csv"),
             "quality_value_watchlist_draft": str(theme_outdir / "quality_value_watchlist_draft.csv"),
             "quality_value_tracking": str(theme_outdir / "quality_value_tracking.csv"),
+            "quality_value_new_additions_tracking": str(theme_outdir / "quality_value_new_additions_tracking.md"),
+            "quality_value_new_additions_tracking_csv": str(theme_outdir / "quality_value_new_additions_tracking.csv"),
             "quality_value_pruning": str(theme_outdir / "quality_value_pruning_report.md"),
             "quality_value_candidate_review": str(theme_outdir / "quality_value_candidate_review.md"),
             "quality_value_candidate_review_csv": str(theme_outdir / "quality_value_candidate_review.csv"),

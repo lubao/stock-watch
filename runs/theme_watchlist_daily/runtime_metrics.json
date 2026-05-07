@@ -1,29 +1,29 @@
 {
-  "generated_at": "2026-05-07 15:30:06",
+  "generated_at": "2026-05-07 16:00:01",
   "status": "ok",
   "step_timings": {
-    "market_regime": 0.005630500003462657,
-    "us_market": 0.01565058299456723,
-    "cache_warmup": 3.393432540993672,
-    "watchlist": 0.15466408300562762,
-    "backtest": 13.559582417015918,
-    "candidate_sets": 0.0652054579986725,
-    "reports": 0.17810329102212563,
-    "shadow_observation": 0.004560333996778354,
-    "alert_tracking": 0.027764458005549386,
-    "should_alert": 7.500057108700275e-07,
-    "notifications": 12.992931584012695,
-    "persist_state": 0.001205957989441231,
-    "persist_success": 0.0018609580001793802
+    "market_regime": 0.005160041997442022,
+    "us_market": 0.015967207989888266,
+    "cache_warmup": 0.3936759170028381,
+    "watchlist": 0.19547533302102238,
+    "backtest": 0.17682950000744313,
+    "candidate_sets": 0.06433349999133497,
+    "reports": 0.1827657500107307,
+    "shadow_observation": 0.004013458994450048,
+    "alert_tracking": 0.028685041004791856,
+    "should_alert": 1.208973117172718e-06,
+    "notifications": 13.139328582998132,
+    "persist_state": 0.0006552079867105931,
+    "persist_success": 0.0004564589762594551
   },
   "warnings": [],
-  "total_seconds": 30.401,
-  "wall_seconds": 30.413,
+  "total_seconds": 14.207,
+  "wall_seconds": 14.22,
   "cache_stats": {
     "history_hit": 0,
-    "history_disk_hit": 93,
+    "history_disk_hit": 98,
     "history_superset_hit": 44,
-    "history_miss": 5,
+    "history_miss": 0,
     "indicator_hit": 93,
     "indicator_superset_hit": 93,
     "indicator_miss": 98
@@ -131,7 +131,7 @@
       "3556.TWO": "2026-04-08",
       "6292.TWO": "2026-04-08"
     },
-    "last_run_mode": "full_rebuild",
-    "last_run_scanned_cutoffs": 85309
+    "last_run_mode": "incremental_noop",
+    "last_run_scanned_cutoffs": 0
   }
 }
