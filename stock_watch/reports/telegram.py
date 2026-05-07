@@ -135,7 +135,7 @@ def build_early_gem_message(
     lines.append("")
     for _, row in gem_candidates.iterrows():
         lines.append(
-            f"{int(row['rank'])}. {messages.format_ticker_name(row)}｜{messages.layer_label(row['layer'])}\n"
+            f"{messages.format_ticker_name(row)}｜{messages.layer_label(row['layer'])}\n"
             f"   5日 {row['ret5_pct']}%｜20日 {row['ret20_pct']}%｜{messages.volatility_badge_text(row)}\n"
             f"   理由：{early_gem_reason(row)}\n"
             f"   買點：{watch_price_plan_text(row, 'short')}"

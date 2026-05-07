@@ -1813,6 +1813,7 @@ class PushMessageTests(unittest.TestCase):
         self.assertNotIn("觸發來源", short_message)
         self.assertIn("5日 9.0%", short_message)
         self.assertIn("🔥活潑", short_message)
+        self.assertNotIn("1. Short Name", short_message)
         self.assertIn("加碼參考", short_message)
         self.assertIn("減碼參考", short_message)
         self.assertIn("失效", short_message)
@@ -1824,6 +1825,7 @@ class PushMessageTests(unittest.TestCase):
         self.assertNotIn("觸發來源", midlong_message)
         self.assertIn("20日 14.0%", midlong_message)
         self.assertIn("🧊穩健", midlong_message)
+        self.assertNotIn("2. Mid Name", midlong_message)
         self.assertIn("加碼參考", midlong_message)
         self.assertTrue(any(label in midlong_message for label in ["續抱", "可分批", "觀察", "分批落袋"]))
 
@@ -2430,6 +2432,7 @@ class PushMessageTests(unittest.TestCase):
         self.assertIn("早期轉強觀察", message)
         self.assertNotIn("觸發來源", message)
         self.assertIn("GEM1.TW", message)
+        self.assertNotIn("1. Gem One", message)
         self.assertIn("⚖️標準", message)
         self.assertIn("重新站回結構", message)
 

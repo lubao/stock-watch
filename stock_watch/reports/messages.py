@@ -323,7 +323,7 @@ def candidate_card(
     price_plan = watch_price_plan_text(row, watch_type)
     price_line = f"\n   買點：{price_plan}" if price_plan else ""
     return (
-        f"{int(row['rank'])}. {format_ticker_name(row)}｜{action}\n"
+        f"{format_ticker_name(row)}｜{action}\n"
         f"   {period_label} {period_value}%｜量比 {volume}｜{vol_text}{risk_part}\n"
         f"   型態：{row['regime']}"
         f"{price_line}"
@@ -343,7 +343,7 @@ def candidate_line(
     period_value = row["ret5_pct"] if watch_type == "short" else row["ret20_pct"]
     vol_text = volatility_badge_text(row)
     return (
-        f"{int(row['rank'])}. {format_ticker_name(row)}｜{action}\n"
+        f"{format_ticker_name(row)}｜{action}\n"
         f"  {period_label} {period_value}% / 量比 {row['volume_ratio20']}｜{vol_text}｜{row['regime']}\n"
         f"  {watch_price_plan_text(row, watch_type)}"
     )
