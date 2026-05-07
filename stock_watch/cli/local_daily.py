@@ -223,10 +223,43 @@ def send_quality_value_notification(
     try:
         import daily_theme_watchlist
 
+        simple_chat_ids = list(getattr(daily_theme_watchlist, "TELEGRAM_SIMPLE_CHAT_IDS", []) or [])
+        if simple_chat_ids:
+            message = build_simple_action_summary_notification(metrics)
+            daily_theme_watchlist.send_telegram_message(message, chat_ids=simple_chat_ids)
+            return
+
         message = build_action_summary_notification(metrics)
         daily_theme_watchlist.send_telegram_message(message)
     except Exception:
         return
+
+
+def build_simple_action_summary_notification(metrics: dict[str, object]) -> str:
+    def _section(label: str, key: str) -> list[str]:
+        values = metrics.get(key, [])
+        if not isinstance(values, list):
+            values = []
+        visible_values = [_format_action_summary_item(str(value)) for value in values[:3] if str(value).strip()]
+        if not visible_values:
+            return []
+        return [label, *[f"• {value}" for value in visible_values]]
+
+    sections = [
+        _section("🟢 今天可小買：(小部位研究單，先驗證不重壓)", "action_trial_tickers"),
+        _section("🟡 想買但等便宜：(等價格回到買區，不追高)", "action_pullback_tickers"),
+        _section("💼 持股落袋：(持股達收成條件，考慮分批)", "portfolio_trim_tickers"),
+    ]
+    visible_sections: list[str] = []
+    for section in sections:
+        if not section:
+            continue
+        if visible_sections:
+            visible_sections.append("")
+        visible_sections.extend(section)
+    if not visible_sections:
+        visible_sections = ["今天沒有新的可小買 / 等拉回 / 落袋動作。"]
+    return "\n".join(["📌 今日可行動名單", "", *visible_sections])
 
 
 def build_action_summary_notification(metrics: dict[str, object]) -> str:

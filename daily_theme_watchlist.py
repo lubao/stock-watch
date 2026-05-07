@@ -156,7 +156,15 @@ def load_telegram_chat_ids(chat_ids_path: Path) -> list[int]:
     return parse_chat_ids(chat_ids_path.read_text(encoding="utf-8-sig"))
 
 
+def load_telegram_simple_chat_ids() -> list[int]:
+    env_value = os.getenv("TELEGRAM_SIMPLE_CHAT_IDS", "").strip()
+    if not env_value:
+        return []
+    return parse_chat_ids(env_value)
+
+
 TELEGRAM_CHAT_IDS = load_telegram_chat_ids(CHAT_IDS_PATH)
+TELEGRAM_SIMPLE_CHAT_IDS = load_telegram_simple_chat_ids()
 
 
 @dataclass
@@ -2518,13 +2526,14 @@ def split_message(text: str, limit: int) -> List[str]:
     return chunks
 
 
-def send_telegram_message(message: str) -> None:
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_IDS:
+def send_telegram_message(message: str, *, chat_ids: list[int] | None = None) -> None:
+    recipients = TELEGRAM_CHAT_IDS if chat_ids is None else chat_ids
+    if not TELEGRAM_TOKEN or not recipients:
         logger.warning("Telegram not configured. Skip notification.")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     for part in split_message(telegram_display_text(message), CONFIG.max_message_length):
-        for chat_id in TELEGRAM_CHAT_IDS:
+        for chat_id in recipients:
             for attempt in range(1, TELEGRAM_SEND_ATTEMPTS + 1):
                 try:
                     resp = TELEGRAM_HTTP.post(url, json={"chat_id": chat_id, "text": part}, timeout=HTTP_TIMEOUT)

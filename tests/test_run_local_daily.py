@@ -11,6 +11,7 @@ import pandas as pd
 
 from stock_watch.cli.local_daily import build_verification_argv
 from stock_watch.cli.local_daily import build_action_summary_notification
+from stock_watch.cli.local_daily import build_simple_action_summary_notification
 from stock_watch.cli.local_daily import build_shadow_open_not_chase_tracking_df
 from stock_watch.cli.local_daily import collect_status_metrics
 from stock_watch.cli.local_daily import configure_local_telegram_chat_ids
@@ -85,6 +86,30 @@ class RunLocalDailyTests(unittest.TestCase):
         self.assertIn("🧪 試單追蹤：(已列試單，檢查轉強或失效)\n• 茂訊 (3213.TWO) active_trial/risk_watch 第一筆 1/3 可研究", message)
         self.assertIn("💼 持股落袋：(持股達收成條件，考慮分批)\n• 英業達 (2356)", message)
         self.assertNotIn("6161.TWO 捷波, 3515.TW 華擎", message)
+
+    def test_build_simple_action_summary_notification_keeps_only_actionable_sections(self) -> None:
+        message = build_simple_action_summary_notification(
+            {
+                "action_trial_tickers": ["6161.TWO 捷波", "4995.TWO 晶達", "8261.TW 富鼎", "3213.TWO 茂訊"],
+                "action_pullback_tickers": ["3515.TW 華擎"],
+                "action_wait_strength_tickers": ["3005.TW 神基"],
+                "action_cooldown_tickers": ["2376.TW 技嘉"],
+                "new_addition_action_tickers": ["3213.TWO 茂訊 可試單"],
+                "trial_ledger_action_tickers": ["3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究"],
+                "portfolio_trim_tickers": ["英業達 (2356)"],
+            }
+        )
+
+        self.assertIn("📌 今日可行動名單", message)
+        self.assertIn("🟢 今天可小買：(小部位研究單，先驗證不重壓)\n• 捷波 (6161.TWO)", message)
+        self.assertIn("• 富鼎 (8261.TW)", message)
+        self.assertNotIn("茂訊 (3213.TWO)", message)
+        self.assertIn("🟡 想買但等便宜：(等價格回到買區，不追高)\n• 華擎 (3515.TW)", message)
+        self.assertIn("💼 持股落袋：(持股達收成條件，考慮分批)\n• 英業達 (2356)", message)
+        self.assertNotIn("等轉強", message)
+        self.assertNotIn("過熱先等", message)
+        self.assertNotIn("新A追蹤", message)
+        self.assertNotIn("試單追蹤", message)
 
     def test_should_run_step_uses_mode_defaults_and_skip_overrides(self) -> None:
         preopen_args = parse_args(["--mode", "preopen"])

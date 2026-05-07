@@ -52,6 +52,7 @@ from daily_theme_watchlist import (
     detect_row,
     grade_signal,
     load_telegram_chat_ids,
+    load_telegram_simple_chat_ids,
     load_portfolio,
     normalize_ticker_symbol,
     parse_chat_ids,
@@ -1083,6 +1084,10 @@ class TelegramChatIdTests(unittest.TestCase):
             chat_ids_path.write_text("123456789\n-1001111111111\n", encoding="utf-8")
             with patch.dict("os.environ", {"TELEGRAM_CHAT_IDS": ""}, clear=False):
                 self.assertEqual(load_telegram_chat_ids(chat_ids_path), [123456789, -1001111111111])
+
+    def test_load_telegram_simple_chat_ids_reads_env_only(self) -> None:
+        with patch.dict("os.environ", {"TELEGRAM_SIMPLE_CHAT_IDS": "555,666\n-1007"}, clear=False):
+            self.assertEqual(load_telegram_simple_chat_ids(), [555, 666, -1007])
 
     def test_sanitize_telegram_error_redacts_bot_token(self) -> None:
         error = "Max retries exceeded with url: /bot123:secret/sendMessage"
