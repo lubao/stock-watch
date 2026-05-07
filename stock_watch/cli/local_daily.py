@@ -240,13 +240,13 @@ def build_action_summary_notification(metrics: dict[str, object]) -> str:
         return [label, *[f"• {value}" for value in visible_values]]
 
     sections = [
-        _section("🟢 可試單", "action_trial_tickers"),
-        _section("🟡 等拉回", "action_pullback_tickers"),
-        _section("🔵 等轉強", "action_wait_strength_tickers"),
-        _section("🔴 過熱先等", "action_cooldown_tickers"),
-        _section("🆕 新A追蹤", "new_addition_action_tickers"),
-        _section("🧪 試單追蹤", "trial_ledger_action_tickers"),
-        _section("💼 持股落袋", "portfolio_trim_tickers"),
+        _section("🟢 可試單：(小部位研究單，先驗證不重壓)", "action_trial_tickers"),
+        _section("🟡 等拉回：(等價格回到買區，不追高)", "action_pullback_tickers"),
+        _section("🔵 等轉強：(訊號還沒完整，等量價確認)", "action_wait_strength_tickers"),
+        _section("🔴 過熱先等：(漲幅或風險偏高，先等降溫)", "action_cooldown_tickers"),
+        _section("🆕 新A追蹤：(新進A級，先觀察角色與買點)", "new_addition_action_tickers"),
+        _section("🧪 試單追蹤：(已列試單，檢查轉強或失效)", "trial_ledger_action_tickers"),
+        _section("💼 持股落袋：(持股達收成條件，考慮分批)", "portfolio_trim_tickers"),
     ]
     visible_sections: list[str] = []
     for section in sections:

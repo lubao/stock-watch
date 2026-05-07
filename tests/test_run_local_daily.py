@@ -80,10 +80,10 @@ class RunLocalDailyTests(unittest.TestCase):
         )
 
         self.assertIn("📌 今日動作摘要", message)
-        self.assertIn("🟢 可試單\n• 6161.TWO 捷波", message)
-        self.assertIn("🆕 新A追蹤\n• 3213.TWO 茂訊 可試單", message)
-        self.assertIn("🧪 試單追蹤\n• 3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究", message)
-        self.assertIn("💼 持股落袋\n• 英業達 (2356)", message)
+        self.assertIn("🟢 可試單：(小部位研究單，先驗證不重壓)\n• 6161.TWO 捷波", message)
+        self.assertIn("🆕 新A追蹤：(新進A級，先觀察角色與買點)\n• 3213.TWO 茂訊 可試單", message)
+        self.assertIn("🧪 試單追蹤：(已列試單，檢查轉強或失效)\n• 3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究", message)
+        self.assertIn("💼 持股落袋：(持股達收成條件，考慮分批)\n• 英業達 (2356)", message)
         self.assertNotIn("6161.TWO 捷波, 3515.TW 華擎", message)
 
     def test_should_run_step_uses_mode_defaults_and_skip_overrides(self) -> None:
