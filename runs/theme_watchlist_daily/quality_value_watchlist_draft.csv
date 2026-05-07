@@ -1,3 +1,9 @@
 ﻿ticker,name,group,layer,enabled,radar_priority,similar_score,watchlist_reason
+3515.TW,華擎,satellite,quality_value,True,A加入觀察,18.65,品質分數高、估值分數高、營收YoY正、ROE>=12%、PE<=18、負債可控
+2414.TW,精技,satellite,quality_value,True,B研究追蹤,17.68,估值分數高、營收YoY正、ROE>=12%、PE<=18、負債偏高需確認
+3029.TW,零壹,satellite,quality_value,True,B研究追蹤,16.35,估值分數高、營收YoY正、ROE>=12%、PE<=18、負債偏高需確認
+2432.TW,倚天酷碁-創,satellite,quality_value,True,B研究追蹤,16.0,估值分數高、營收YoY正、PE<=18、負債可控
+1608.TW,華榮,satellite,quality_value,True,B研究追蹤,15.73,估值分數高、營收YoY正、PE<=18、負債可控
+3033.TW,威健,satellite,quality_value,True,B研究追蹤,14.67,估值合理、營收YoY正、ROE>=12%、負債偏高需確認
 6435.TWO,大中,satellite,quality_value,True,B研究追蹤,14.29,品質分數高、營收YoY正、ROE>=12%、負債可控
 3416.TW,融程電,satellite,quality_value,True,B研究追蹤,13.5,品質分數高、營收YoY正、ROE>=12%、負債可控

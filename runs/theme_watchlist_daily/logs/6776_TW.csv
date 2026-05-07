@@ -1,2 +1,2 @@
 ﻿date,ticker,name,group,layer,close,ret1_pct,ret5_pct,ret10_pct,ret20_pct,volume,avg_vol20,volume_ratio20,ma20,ma60,ma120,drawdown120_pct,bias20_pct,setup_score,risk_score,signals,score_band,regime,spec_risk_score,spec_risk_label,spec_risk_subtype,spec_risk_note,spec_risk_flags,spec_price_action_score,spec_crowding_score,spec_extension_score,spec_structure_score,atr_pct,volatility_tag
-2026-05-06,6776.TW,展碁國際,satellite,quality_value,58.2,1.22,-0.34,-2.68,2.46,801144,437930,1.83,59.12,59.14,55.95,-20.82,-1.55,6,1,PULLBACK,偏強可追蹤,高檔拉回整理,1,正常,正常,爆量,爆量,0,1,0,0,2.99,標準
+2026-05-06,6776.TW,展碁國際,satellite,quality_value,58.2,1.22,-0.34,-2.68,2.46,798010,437774,1.82,59.12,59.14,55.95,-20.82,-1.55,6,1,PULLBACK,偏強可追蹤,高檔拉回整理,1,正常,正常,爆量,爆量,0,1,0,0,2.99,標準
