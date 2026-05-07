@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +33,7 @@ SHADOW_OPEN_NOT_CHASE_TRACKING_MD = THEME_OUTDIR / "shadow_open_not_chase_tracki
 SHADOW_OPEN_NOT_CHASE_TRACKING_CSV = THEME_OUTDIR / "shadow_open_not_chase_tracking.csv"
 QUALITY_VALUE_ENTRY_PLAN_CSV = THEME_OUTDIR / "quality_value_entry_plan.csv"
 QUALITY_VALUE_SIMILAR_SCOUT_CSV = THEME_OUTDIR / "quality_value_similar_scout.csv"
+DEFAULT_LOCAL_TELEGRAM_CHAT_IDS = "7758949915"
 
 MODE_STEPS: dict[str, tuple[str, ...]] = {
     "preopen": ("watchlist", "verification"),
@@ -78,6 +81,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=True,
         help="Send a concise Telegram quality/value entry-plan summary after the quality-value step.",
     )
+    parser.add_argument(
+        "--local-telegram-chat-ids",
+        default=os.getenv("STOCK_WATCH_LOCAL_TELEGRAM_CHAT_IDS", DEFAULT_LOCAL_TELEGRAM_CHAT_IDS),
+        help=(
+            "Restrict Telegram recipients for this local workflow. Defaults to 7758949915; "
+            "use commas/newlines for multiple ids or an empty string to disable local sends."
+        ),
+    )
 
     parser.add_argument("--top-n-short", type=int, default=5)
     parser.add_argument("--top-n-midlong", type=int, default=5)
@@ -95,6 +106,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--all-dates", action="store_true")
     parser.add_argument("--no-snapshot", action="store_true")
     return parser.parse_args(argv)
+
+
+def parse_local_telegram_chat_ids(raw: str | None) -> list[int]:
+    tokens = re.split(r"[\s,]+", str(raw or "").strip())
+    chat_ids: list[int] = []
+    for token in tokens:
+        if not token:
+            continue
+        chat_ids.append(int(token))
+    return chat_ids
+
+
+def configure_local_telegram_chat_ids(raw: str | None, daily_module: object | None = None) -> list[int]:
+    chat_ids = parse_local_telegram_chat_ids(raw)
+    if daily_module is None:
+        import daily_theme_watchlist as daily_module
+    setattr(daily_module, "TELEGRAM_CHAT_IDS", chat_ids)
+    return chat_ids
 
 
 def should_run_step(args: argparse.Namespace, step: str) -> bool:
@@ -560,6 +589,65 @@ def _collect_spec_risk_metrics(daily_rank_csv: Path) -> dict[str, object]:
     }
 
 
+def _format_ticker_names(df: pd.DataFrame, *, limit: int = 5) -> list[str]:
+    if df.empty:
+        return []
+    names: list[str] = []
+    for _, row in df.head(limit).iterrows():
+        ticker = str(row.get("ticker", "") or "").strip()
+        name = str(row.get("name", "") or "").strip()
+        if not ticker and not name:
+            continue
+        names.append(f"{ticker} {name}".strip())
+    return names
+
+
+def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, list[str]]:
+    if not entry_plan_csv.exists():
+        return {
+            "action_trial_tickers": [],
+            "action_pullback_tickers": [],
+            "action_wait_strength_tickers": [],
+            "action_cooldown_tickers": [],
+        }
+    entry_plan = _load_csv_safely(entry_plan_csv)
+    if entry_plan.empty or "entry_bias" not in entry_plan.columns:
+        return {
+            "action_trial_tickers": [],
+            "action_pullback_tickers": [],
+            "action_wait_strength_tickers": [],
+            "action_cooldown_tickers": [],
+        }
+    work = entry_plan.copy()
+    if "decision_priority" in work.columns:
+        work["_decision_priority"] = pd.to_numeric(work["decision_priority"], errors="coerce").fillna(0)
+        work = work.sort_values(by=["_decision_priority"], ascending=[False])
+    bias = work["entry_bias"].fillna("").astype(str).str.strip()
+    return {
+        "action_trial_tickers": _format_ticker_names(work[bias.isin(["分批試單", "研究試單"])]),
+        "action_pullback_tickers": _format_ticker_names(work[bias == "等拉回"]),
+        "action_wait_strength_tickers": _format_ticker_names(work[bias == "等轉強"]),
+        "action_cooldown_tickers": _format_ticker_names(work[bias == "等待降溫"]),
+    }
+
+
+def _collect_portfolio_action_summary(portfolio_report_md: Path) -> dict[str, list[str]]:
+    if not portfolio_report_md.exists():
+        return {"portfolio_trim_tickers": []}
+    try:
+        lines = portfolio_report_md.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return {"portfolio_trim_tickers": []}
+    trim_tickers: list[str] = []
+    for line in lines:
+        if not line.startswith("- ") or "建議 分批落袋" not in line:
+            continue
+        left = line.removeprefix("- ").split("|", 1)[0].strip()
+        if left:
+            trim_tickers.append(left)
+    return {"portfolio_trim_tickers": trim_tickers[:5]}
+
+
 def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdir: Path = VERIFICATION_OUTDIR) -> dict[str, object]:
     snapshots_csv = verification_outdir / "reco_snapshots.csv"
     outcomes_csv = verification_outdir / "reco_outcomes.csv"
@@ -571,6 +659,8 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
     quality_value_runtime = _load_runtime_metrics(theme_outdir / "quality_value_metrics.json")
     verification_runtime = _load_runtime_metrics(verification_outdir / "runtime_metrics.json")
     spec_risk_metrics = _collect_spec_risk_metrics(daily_rank_csv)
+    action_summary = _collect_quality_value_action_summary(theme_outdir / "quality_value_entry_plan.csv")
+    portfolio_summary = _collect_portfolio_action_summary(theme_outdir / "portfolio_report.md")
     snapshots_df = _load_csv_safely(snapshots_csv)
     outcomes_df = _load_csv_safely(outcomes_csv)
     verification_gate = build_data_quality_gate(outcomes_df, snapshots_df)
@@ -645,6 +735,8 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
         "spec_risk_high_rows": int(spec_risk_metrics["spec_risk_high_rows"]),
         "spec_risk_watch_rows": int(spec_risk_metrics["spec_risk_watch_rows"]),
         "spec_risk_top_tickers": list(spec_risk_metrics["spec_risk_top_tickers"]),
+        **action_summary,
+        **portfolio_summary,
     }
 
 
@@ -704,6 +796,14 @@ def render_local_status_markdown(
             f"- Quality value runtime: `{metrics.get('quality_value_runtime_seconds', 0.0):.3f}s` ({metrics.get('quality_value_runtime_status') or 'n/a'})"
             + (f", generated `{metrics.get('quality_value_generated_at')}`" if metrics.get("quality_value_generated_at") else ""),
             f"- Verification runtime: `{metrics.get('verification_runtime_seconds', 0.0):.3f}s` ({metrics.get('verification_runtime_status') or 'n/a'})",
+            "",
+            "## Action Summary",
+            "",
+            f"- 可試單: `{', '.join(metrics.get('action_trial_tickers', [])) or 'n/a'}`",
+            f"- 等拉回: `{', '.join(metrics.get('action_pullback_tickers', [])) or 'n/a'}`",
+            f"- 等轉強: `{', '.join(metrics.get('action_wait_strength_tickers', [])) or 'n/a'}`",
+            f"- 過熱先等: `{', '.join(metrics.get('action_cooldown_tickers', [])) or 'n/a'}`",
+            f"- 持股分批落袋: `{', '.join(metrics.get('portfolio_trim_tickers', [])) or 'n/a'}`",
             "",
             "## Key Outputs",
             "",
@@ -797,6 +897,7 @@ def write_local_status_dashboard(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    configure_local_telegram_chat_ids(args.local_telegram_chat_ids)
     steps: list[dict[str, str]] = []
     overall_status = "ok"
     force_watchlist = args.force_watchlist or args.mode == "postclose"

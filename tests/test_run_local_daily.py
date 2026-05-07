@@ -12,7 +12,9 @@ import pandas as pd
 from stock_watch.cli.local_daily import build_verification_argv
 from stock_watch.cli.local_daily import build_shadow_open_not_chase_tracking_df
 from stock_watch.cli.local_daily import collect_status_metrics
+from stock_watch.cli.local_daily import configure_local_telegram_chat_ids
 from stock_watch.cli.local_daily import main
+from stock_watch.cli.local_daily import parse_local_telegram_chat_ids
 from stock_watch.cli.local_daily import parse_args
 from stock_watch.cli.local_daily import should_run_step
 from stock_watch.cli.local_daily import write_shadow_open_not_chase_tracking_outputs
@@ -31,6 +33,19 @@ class RunLocalDailyTests(unittest.TestCase):
     def test_parse_args_defaults_to_full_mode(self) -> None:
         args = parse_args([])
         self.assertEqual(args.mode, "full")
+        self.assertEqual(args.local_telegram_chat_ids, "7758949915")
+
+    def test_parse_local_telegram_chat_ids_supports_commas_and_newlines(self) -> None:
+        self.assertEqual(parse_local_telegram_chat_ids("7758949915,123\n-1001"), [7758949915, 123, -1001])
+
+    def test_configure_local_telegram_chat_ids_overrides_daily_module(self) -> None:
+        class FakeDailyModule:
+            TELEGRAM_CHAT_IDS = [111, 222]
+
+        chat_ids = configure_local_telegram_chat_ids("7758949915", FakeDailyModule)
+
+        self.assertEqual(chat_ids, [7758949915])
+        self.assertEqual(FakeDailyModule.TELEGRAM_CHAT_IDS, [7758949915])
 
     def test_should_run_step_uses_mode_defaults_and_skip_overrides(self) -> None:
         preopen_args = parse_args(["--mode", "preopen"])
@@ -105,6 +120,18 @@ class RunLocalDailyTests(unittest.TestCase):
                 json.dumps({"status": "ok", "wall_seconds": 0.456}),
                 encoding="utf-8",
             )
+            (theme_outdir / "portfolio_report.md").write_text(
+                "- 英業達 (2356) | 進攻持股 | 建議 分批落袋 | 價格帶 加碼≤47.95\n",
+                encoding="utf-8",
+            )
+            pd.DataFrame(
+                [
+                    {"ticker": "6161.TWO", "name": "捷波", "decision_priority": 34, "entry_bias": "分批試單"},
+                    {"ticker": "4966.TWO", "name": "譜瑞-KY", "decision_priority": 25, "entry_bias": "等拉回"},
+                    {"ticker": "3005.TW", "name": "神基", "decision_priority": 23, "entry_bias": "等轉強"},
+                    {"ticker": "6525.TW", "name": "捷敏-KY", "decision_priority": -6, "entry_bias": "等待降溫"},
+                ]
+            ).to_csv(theme_outdir / "quality_value_entry_plan.csv", index=False)
             (verification_outdir / "runtime_metrics.json").write_text(
                 json.dumps({"status": "ok", "wall_seconds": 2.5}),
                 encoding="utf-8",
@@ -134,6 +161,11 @@ class RunLocalDailyTests(unittest.TestCase):
         self.assertEqual(metrics["spec_risk_watch_rows"], 1)
         self.assertEqual(metrics["spec_risk_top_tickers"], ["3057.TW", "6669.TW"])
         self.assertEqual(metrics["watchlist_artifact_freshness_status"], "current")
+        self.assertEqual(metrics["action_trial_tickers"], ["6161.TWO 捷波"])
+        self.assertEqual(metrics["action_pullback_tickers"], ["4966.TWO 譜瑞-KY"])
+        self.assertEqual(metrics["action_wait_strength_tickers"], ["3005.TW 神基"])
+        self.assertEqual(metrics["action_cooldown_tickers"], ["6525.TW 捷敏-KY"])
+        self.assertEqual(metrics["portfolio_trim_tickers"], ["英業達 (2356)"])
 
     def test_collect_status_metrics_reads_midlong_threshold_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
