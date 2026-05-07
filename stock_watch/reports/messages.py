@@ -149,7 +149,23 @@ def compact_summary_line(
 ) -> str:
     action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
     role = "短線" if watch_type == "short" else "中線"
-    return f"- {format_ticker_name(row)}｜{role}｜{action}"
+    return f"• {format_ticker_name(row)}｜{role}｜{action}"
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        if pd.isna(value):
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _compact_number(value: object) -> str:
+    number = _safe_float(value)
+    if number == int(number):
+        return str(int(number))
+    return f"{number:.1f}"
 
 
 def no_chase_reason(
@@ -256,7 +272,7 @@ def compact_briefing_lines(
     lines: list[str] = []
     if not primary.empty:
         lines.append("")
-        lines.append("先看 5 檔")
+        lines.append("🔥 先看 5 檔")
         for _, row in primary.head(5).iterrows():
             lines.append(
                 compact_summary_line(
@@ -268,7 +284,7 @@ def compact_briefing_lines(
             )
     if not observation.empty:
         lines.append("")
-        lines.append("觀察 5 檔")
+        lines.append("👀 觀察 5 檔")
         for _, row in observation.head(5).iterrows():
             lines.append(
                 compact_summary_line(
@@ -280,13 +296,38 @@ def compact_briefing_lines(
             )
     if not avoid.empty:
         lines.append("")
-        lines.append("今天不要追的 3 檔")
+        lines.append("⛔ 今天不要追的 3 檔")
         for _, row in avoid.head(3).iterrows():
             lines.append(
-                f"- {format_ticker_name(row)}｜"
+                f"• {format_ticker_name(row)}｜"
                 f"{no_chase_reason(row, short_term_action_label=short_term_action_label, midlong_action_label=midlong_action_label)}"
             )
     return lines
+
+
+def candidate_card(
+    row: pd.Series,
+    *,
+    watch_type: str,
+    short_term_action_label: Callable[[pd.Series], str],
+    midlong_action_label: Callable[[pd.Series], str],
+    watch_price_plan_text: Callable[[pd.Series, str], str],
+) -> str:
+    action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
+    period_label = "5日" if watch_type == "short" else "20日"
+    period_value = row["ret5_pct"] if watch_type == "short" else row["ret20_pct"]
+    volume = _compact_number(row.get("volume_ratio20", 0))
+    vol_text = volatility_badge_text(row)
+    risk = str(row.get("spec_risk_label", "") or "")
+    risk_part = f"｜{risk}" if risk and risk != "正常" else ""
+    price_plan = watch_price_plan_text(row, watch_type)
+    price_line = f"\n   買點：{price_plan}" if price_plan else ""
+    return (
+        f"{int(row['rank'])}. {format_ticker_name(row)}｜{action}\n"
+        f"   {period_label} {period_value}%｜量比 {volume}｜{vol_text}{risk_part}\n"
+        f"   型態：{row['regime']}"
+        f"{price_line}"
+    )
 
 
 def candidate_line(
@@ -302,7 +343,7 @@ def candidate_line(
     period_value = row["ret5_pct"] if watch_type == "short" else row["ret20_pct"]
     vol_text = volatility_badge_text(row)
     return (
-        f"- #{int(row['rank'])} {format_ticker_name(row)}｜{action}\n"
+        f"{int(row['rank'])}. {format_ticker_name(row)}｜{action}\n"
         f"  {period_label} {period_value}% / 量比 {row['volume_ratio20']}｜{vol_text}｜{row['regime']}\n"
         f"  {watch_price_plan_text(row, watch_type)}"
     )

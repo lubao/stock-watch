@@ -11,6 +11,13 @@ from stock_watch.reports import messages
 CandidateSetsBuilder = Callable[[pd.DataFrame, dict, dict], tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]]
 
 
+def _compact_text(value: object, *, limit: int = 88) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}…"
+
+
 def subscriber_scenario_lines(scenario: dict) -> list[str]:
     label = str(scenario.get("label", "") or "")
 
@@ -124,14 +131,14 @@ def build_early_gem_message(
     lines.append(f"先看：{top_names}")
     lines.append("一句話：這區是『剛轉強、還沒太擁擠』的候選，不是追最熱。")
     lines.append("")
-    lines.append("解讀：這一區不是追最熱，而是找剛轉強、還沒太擁擠的候選。")
+    lines.append("定位：剛轉強、還沒太擁擠；先研究，不追熱。")
     lines.append("")
     for _, row in gem_candidates.iterrows():
-        vol_text = messages.volatility_badge_text(row)
         lines.append(
-            f"- #{int(row['rank'])} {messages.format_ticker_name(row)}｜{messages.layer_label(row['layer'])}\n"
-            f"  5日 {row['ret5_pct']}% / 20日 {row['ret20_pct']}%｜{vol_text}\n"
-            f"  {early_gem_reason(row)}｜{watch_price_plan_text(row, 'short')}"
+            f"{int(row['rank'])}. {messages.format_ticker_name(row)}｜{messages.layer_label(row['layer'])}\n"
+            f"   5日 {row['ret5_pct']}%｜20日 {row['ret20_pct']}%｜{messages.volatility_badge_text(row)}\n"
+            f"   理由：{early_gem_reason(row)}\n"
+            f"   買點：{watch_price_plan_text(row, 'short')}"
         )
     return "\n".join(lines).strip()
 
@@ -152,13 +159,13 @@ def build_special_etf_message(
         return "\n".join(lines).strip()
 
     lines.append("")
-    lines.append("解讀：0050、00878偏向台股風向球；00772B、00773B偏向利率與防守溫度計。")
+    lines.append("定位：0050/00878 看台股風向；00772B/00773B 看利率與防守。")
     lines.append("")
     for _, row in etf_candidates.iterrows():
         action = special_etf_action_label(row)
         lines.append(
-            f"{row['name']} ({row['ticker']}) {action} | "
-            f"5日 {row['ret5_pct']}% / 20日 {row['ret20_pct']}% | {messages.layer_label(row['layer'])}"
+            f"• {row['name']} ({row['ticker']})｜{action}\n"
+            f"  5日 {row['ret5_pct']}%｜20日 {row['ret20_pct']}%｜{messages.layer_label(row['layer'])}"
         )
     return "\n".join(lines).strip()
 
@@ -183,10 +190,10 @@ def build_short_term_message(
     total_up = int((df_rank["status_change"] == "UP").sum()) if "status_change" in df_rank.columns else 0
 
     lines = [
-        "📣 短線可買",
+        "⚡ 短線可買",
     ]
     summary_parts = [f"A級 {total_a} 檔", f"B級 {total_b} 檔", f"轉強 {total_up} 檔"]
-    lines.append(" / ".join(summary_parts))
+    lines.append(f"概況：{' / '.join(summary_parts)}")
     lines.extend(subscriber_watchlist_lines(scenario, "short", short_top_n))
     if short_candidates.empty:
         lines.append("今天短線沒有夠清楚的可買標的，先等。")
@@ -202,12 +209,11 @@ def build_short_term_message(
         )
     )
     lines.append("")
-    lines.append("解讀：這一區只放今天相對可考慮出手的短線標的；太熱或只適合續看的，會放到短線觀察。")
-    lines.append("短線主看 5 個交易日；1D 只當輔助參考。")
+    lines.append("📌 主名單")
     lines.append("")
     for _, row in short_candidates.iterrows():
         lines.append(
-            messages.candidate_line(
+            messages.candidate_card(
                 row,
                 watch_type="short",
                 short_term_action_label=short_term_action_label,
@@ -217,12 +223,12 @@ def build_short_term_message(
         )
     if not short_backups.empty:
         lines.append("")
-        lines.append("短線觀察 (最多5檔)")
+        lines.append("👀 短線觀察")
         lines.extend(messages.observation_summary(short_backups, watch_type="short"))
         lines.append("")
-        for _, row in short_backups.iterrows():
+        for _, row in short_backups.head(3).iterrows():
             lines.append(
-                messages.candidate_line(
+                messages.candidate_card(
                     row,
                     watch_type="short",
                     short_term_action_label=short_term_action_label,
@@ -250,8 +256,8 @@ def build_midlong_message(
     midlong_top_n = effective_midlong_top_n(df_rank, market_regime, us_market)
     total_b = int((df_rank["grade"] == "B").sum()) if not df_rank.empty else 0
     lines = [
-        "📣 中長線可布局",
-        f"B級結構股 {total_b} 檔",
+        "🧱 中長線可布局",
+        f"概況：B級結構股 {total_b} 檔",
     ]
     lines.extend(subscriber_watchlist_lines(scenario, "midlong", midlong_top_n))
     if midlong_candidates.empty:
@@ -268,12 +274,11 @@ def build_midlong_message(
         )
     )
     lines.append("")
-    lines.append("解讀：這一區偏向可布局的趨勢股；強但不一定適合現在進場的，會放到中長線觀察。")
-    lines.append("中線主看 20 個交易日；1D / 5D 只當輔助觀察。")
+    lines.append("📌 主名單")
     lines.append("")
     for _, row in midlong_candidates.iterrows():
         lines.append(
-            messages.candidate_line(
+            messages.candidate_card(
                 row,
                 watch_type="midlong",
                 short_term_action_label=short_term_action_label,
@@ -283,12 +288,12 @@ def build_midlong_message(
         )
     if not midlong_backups.empty:
         lines.append("")
-        lines.append("中長線觀察 (最多5檔)")
+        lines.append("👀 中長線觀察")
         lines.extend(messages.observation_summary(midlong_backups, watch_type="midlong"))
         lines.append("")
-        for _, row in midlong_backups.iterrows():
+        for _, row in midlong_backups.head(3).iterrows():
             lines.append(
-                messages.candidate_line(
+                messages.candidate_card(
                     row,
                     watch_type="midlong",
                     short_term_action_label=short_term_action_label,
@@ -317,13 +322,13 @@ def new_watchlist_spotlight_lines(
     if fresh.empty:
         return []
 
-    lines = ["新加入追蹤觀察：", "先看這批新名單要落在哪一種角色，不是每檔都等同主推。"]
+    lines = ["🆕 新加入追蹤觀察", "定位：先分角色，不等於主推。"]
     for _, row in fresh.iterrows():
         watch_type = "short" if str(row.get("layer", "")) == "short_attack" else "midlong"
         action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
         lines.append(
-            f"- {messages.format_ticker_name(row)}｜{messages.layer_label(str(row.get('layer', '')))}\n"
-            f"  {messages.volatility_badge_text(row)}｜初步看法：{action}｜{row['regime']}"
+            f"• {messages.format_ticker_name(row)}｜{messages.layer_label(str(row.get('layer', '')))}\n"
+            f"  初步看法：{action}｜{messages.volatility_badge_text(row)}｜{row['regime']}"
         )
     return lines
 
@@ -345,14 +350,17 @@ def build_macro_message(
     prev_rank_csv: Path,
 ) -> str:
     scenario = build_market_scenario(market_regime, us_market, df_rank)
+    scenario_lines = subscriber_scenario_lines(scenario)
     lines = [
-        "📣 大盤 / 美股摘要",
-        *subscriber_scenario_lines(scenario),
+        "📌 大盤 / 美股摘要",
+        scenario_lines[0],
+        scenario_lines[1],
+        scenario_lines[2],
         "",
-        market_regime["comment"],
-        us_market["summary"],
+        f"台股：{_compact_text(market_regime['comment'])}",
+        f"美股：{_compact_text(us_market['summary'])}",
         "",
-        f"盤勢情境：{scenario['label']} | 目前節奏：{scenario['stance']}",
+        f"盤勢情境：{scenario['label']}｜{scenario['stance']}",
         f"操作重點：{scenario['focus']}",
         f"出場提醒：{scenario['exit_note']}",
     ]
@@ -370,7 +378,7 @@ def build_macro_message(
         lines.append(f"持股同步加入觀察清單：{', '.join(auto_added_tickers)}")
     if df_rank is not None and not df_rank.empty:
         top_names = "、".join(messages.format_ticker_name(row) for _, row in df_rank.head(min(len(df_rank), 3)).iterrows())
-        lines.extend(["", f"快速判讀：今天前排先看 {top_names}，但是否能出手仍要回到短線 / 中長線名單判斷。"])
+        lines.extend(["", f"快速判讀：先看 {top_names}；能不能出手看後續名單。"])
         lines.extend(
             messages.compact_briefing_lines(
                 df_rank,
@@ -403,11 +411,11 @@ def build_portfolio_message(
     heat_bias_message: Callable[[pd.DataFrame | None, dict], str],
 ) -> str:
     review = build_portfolio_review_df(df_rank, market_regime, us_market)
-    lines = ["📣 持股檢查"]
+    lines = ["💼 持股檢查"]
     if market_regime is not None and us_market is not None:
         scenario = build_market_scenario(market_regime, us_market, df_rank)
-        lines.append(f"持股節奏：{scenario['label']} | {scenario['stance']}")
-        lines.append(f"今天重點：{scenario['exit_note']}")
+        lines.append(f"持股節奏：{scenario['label']}｜{scenario['stance']}")
+        lines.append(f"重點：{scenario['exit_note']}")
         heat_bias = heat_bias_message(df_rank, scenario)
         if heat_bias:
             lines.append(heat_bias)
@@ -422,8 +430,9 @@ def build_portfolio_message(
             continue
         vol_text = messages.volatility_badge_text(row)
         lines.append(
-            f"{row['name']} ({row['ticker'].split('.')[0]}) [{row['holding_style']}] {row['advice']} | "
-            f"{vol_text} | 現價 {round(float(current_close), 2)} / 成本 {round(float(row['avg_cost']), 2)} | "
-            f"報酬 {row['unrealized_pnl_pct']}% / 目標 {row['target_profit_pct']}% | {row.get('price_plan', '')}"
+            f"• {row['name']} ({row['ticker'].split('.')[0]})｜{row['holding_style']}｜{row['advice']}\n"
+            f"  現價 {round(float(current_close), 2)}｜成本 {round(float(row['avg_cost']), 2)}｜{vol_text}\n"
+            f"  報酬 {row['unrealized_pnl_pct']}% / 目標 {row['target_profit_pct']}%\n"
+            f"  買賣帶：{row.get('price_plan', '')}"
         )
     return "\n".join(lines).strip()

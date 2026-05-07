@@ -79,7 +79,8 @@ class RunLocalDailyTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(len(message.splitlines()), 7)
+        self.assertEqual(len(message.splitlines()), 8)
+        self.assertIn("📌 今日動作摘要", message)
         self.assertIn("🟢 可試單：6161.TWO 捷波", message)
         self.assertIn("🆕 新A追蹤：3213.TWO 茂訊 可試單", message)
         self.assertIn("🧪 試單追蹤：3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究", message)
