@@ -714,9 +714,11 @@ def _collect_trial_ledger_action_summary(trial_ledger_csv: Path) -> dict[str, li
         ticker = str(row.get("ticker", "") or "").strip()
         name = str(row.get("name", "") or "").strip()
         status = str(row.get("trial_status", "") or "").strip()
+        decision_state = str(row.get("decision_state", "") or "").strip()
         action = str(row.get("next_action", "") or "").strip()
         if ticker:
-            items.append(f"{ticker} {name} {status} {action}".strip())
+            status_label = f"{status}/{decision_state}" if decision_state else status
+            items.append(f"{ticker} {name} {status_label} {action}".strip())
     return {"trial_ledger_action_tickers": items}
 
 
@@ -1021,6 +1023,31 @@ def _quality_value_trial_action(row: pd.Series) -> tuple[str, str, str]:
     return "watch_wait", "等待條件", "尚未同時滿足買區與試單條件"
 
 
+def _quality_value_trial_decision(row: pd.Series) -> tuple[str, str]:
+    trial_status = str(row.get("trial_status", "") or "").strip()
+    zone_status = str(row.get("zone_status", "") or "").strip()
+    heat_status = str(row.get("heat_status", "") or "").strip()
+    close = float(pd.to_numeric(pd.Series([row.get("close")]), errors="coerce").fillna(0).iloc[0])
+    entry_zone_high = float(pd.to_numeric(pd.Series([row.get("entry_zone_high")]), errors="coerce").fillna(0).iloc[0])
+    add_trigger_price = float(pd.to_numeric(pd.Series([row.get("add_trigger_price")]), errors="coerce").fillna(0).iloc[0])
+    trim_watch_price = float(pd.to_numeric(pd.Series([row.get("trim_watch_price")]), errors="coerce").fillna(0).iloc[0])
+    risk_to_stop_pct = float(pd.to_numeric(pd.Series([row.get("risk_to_stop_pct")]), errors="coerce").fillna(0).iloc[0])
+    days_to_review = int(float(pd.to_numeric(pd.Series([row.get("days_to_review")]), errors="coerce").fillna(0).iloc[0]))
+    if trial_status == "invalidated" or zone_status == "跌破停損":
+        return "invalidated", "跌破停損，移出試單並回到觀察池"
+    if trial_status == "paused" or heat_status == "過熱":
+        return "risk_pause", "熱度過高，不新增部位，等風險降溫"
+    if trial_status != "active_trial":
+        return "waiting", "條件未齊，等買區與轉強訊號重新同步"
+    if trim_watch_price > 0 and close >= trim_watch_price:
+        return "profit_watch", "接近 +8% 試單檢查；若不續強先鎖定成果"
+    if add_trigger_price > 0 and close >= add_trigger_price and heat_status != "過熱":
+        return "add_watch", "突破確認區；若量能健康可研究第二筆 1/3"
+    if entry_zone_high > 0 and close <= entry_zone_high and abs(risk_to_stop_pct) >= 7:
+        return "risk_watch", "仍在買區但停損距離偏大；試單要小，嚴守停損"
+    return "holding_trial", f"持續追蹤；{days_to_review} 個交易日內重新檢查是否轉強或失效"
+
+
 def _render_quality_value_trial_ledger_markdown(ledger: pd.DataFrame, *, generated_at: str) -> str:
     lines = [
         "# Quality Value Trial Ledger",
@@ -1035,6 +1062,24 @@ def _render_quality_value_trial_ledger_markdown(ledger: pd.DataFrame, *, generat
         return "\n".join(lines)
     status_counts = ledger["trial_status"].fillna("").astype(str).value_counts().to_dict()
     lines.append("- Status: " + ", ".join(f"`{key}`={value}" for key, value in status_counts.items()))
+    if "decision_state" in ledger.columns:
+        decision_counts = ledger["decision_state"].fillna("").astype(str).value_counts().to_dict()
+        lines.append("- Decisions: " + ", ".join(f"`{key}`={value}" for key, value in decision_counts.items()))
+    lines.append("")
+    lines.extend(
+        [
+            "## Decision Cards",
+            "",
+            "| Ticker | Name | State | Next Check | Add Trigger | Trim Watch | Hard Stop | Risk To Stop | Days To Review |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for _, row in ledger.iterrows():
+        lines.append(
+            f"| {row.get('ticker', '')} | {row.get('name', '')} | {row.get('decision_state', '')} | "
+            f"{row.get('next_check', '')} | {row.get('add_trigger_price', '')} | {row.get('trim_watch_price', '')} | "
+            f"{row.get('hard_stop_price', '')} | {row.get('risk_to_stop_pct', '')}% | {row.get('days_to_review', '')} |"
+        )
     lines.append("")
     lines.extend(
         [
@@ -1076,6 +1121,13 @@ def write_quality_value_trial_ledger(
         "entry_zone_high",
         "stop_loss",
         "stop_distance_pct",
+        "hard_stop_price",
+        "risk_to_stop_pct",
+        "add_trigger_price",
+        "trim_watch_price",
+        "days_to_review",
+        "decision_state",
+        "next_check",
         "zone_status",
         "heat_status",
         "next_action",
@@ -1117,6 +1169,16 @@ def write_quality_value_trial_ledger(
             work["entry_zone_high"] = work.get("buy_zone_high", "")
             stop_distance_pct = ((work["close"] / work["stop_loss"] - 1) * 100).round(2)
             work["stop_distance_pct"] = stop_distance_pct.where(work["stop_loss"].notna() & (work["stop_loss"] != 0), "")
+            work["hard_stop_price"] = work["stop_loss"]
+            risk_to_stop_pct = ((work["stop_loss"] / work["simulated_entry_price"] - 1) * 100).round(2)
+            work["risk_to_stop_pct"] = risk_to_stop_pct.where(work["simulated_entry_price"].notna() & work["stop_loss"].notna() & (work["stop_loss"] != 0), "")
+            work["add_trigger_price"] = (pd.to_numeric(work["entry_zone_high"], errors="coerce") * 1.03).round(2)
+            work["trim_watch_price"] = (work["simulated_entry_price"] * 1.08).round(2)
+            days_tracked_num = pd.to_numeric(work["days_tracked"], errors="coerce").fillna(0).astype(int)
+            work["days_to_review"] = days_tracked_num.map(lambda value: max(0, 10 - int(value)))
+            decisions = work.apply(_quality_value_trial_decision, axis=1)
+            work["decision_state"] = [state for state, _ in decisions]
+            work["next_check"] = [next_check for _, next_check in decisions]
             for col in columns:
                 if col not in work.columns:
                     work[col] = ""

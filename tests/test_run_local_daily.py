@@ -62,7 +62,7 @@ class RunLocalDailyTests(unittest.TestCase):
                 "action_wait_strength_tickers": ["3005.TW 神基"],
                 "action_cooldown_tickers": ["2376.TW 技嘉"],
                 "new_addition_action_tickers": ["3213.TWO 茂訊 可試單"],
-                "trial_ledger_action_tickers": ["3213.TWO 茂訊 active_trial 第一筆 1/3 可研究"],
+                "trial_ledger_action_tickers": ["3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究"],
                 "portfolio_trim_tickers": ["英業達 (2356)"],
             }
         )
@@ -70,7 +70,7 @@ class RunLocalDailyTests(unittest.TestCase):
         self.assertEqual(len(message.splitlines()), 7)
         self.assertIn("🟢 可試單：6161.TWO 捷波", message)
         self.assertIn("🆕 新A追蹤：3213.TWO 茂訊 可試單", message)
-        self.assertIn("🧪 試單追蹤：3213.TWO 茂訊 active_trial 第一筆 1/3 可研究", message)
+        self.assertIn("🧪 試單追蹤：3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究", message)
         self.assertIn("💼 持股落袋：英業達 (2356)", message)
 
     def test_should_run_step_uses_mode_defaults_and_skip_overrides(self) -> None:
@@ -382,8 +382,13 @@ class RunLocalDailyTests(unittest.TestCase):
             ledger_md_exists = ledger_md.exists()
 
         self.assertEqual(row["trial_status"], "active_trial")
+        self.assertEqual(row["decision_state"], "risk_watch")
         self.assertEqual(row["next_action"], "第一筆 1/3 可研究")
         self.assertEqual(row["simulated_entry_price"], 114.5)
+        self.assertEqual(row["add_trigger_price"], 117.94)
+        self.assertEqual(row["trim_watch_price"], 123.66)
+        self.assertEqual(row["risk_to_stop_pct"], -7.06)
+        self.assertEqual(row["days_to_review"], 9)
         self.assertTrue(ledger_csv_exists)
         self.assertTrue(ledger_md_exists)
 
