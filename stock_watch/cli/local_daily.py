@@ -234,7 +234,7 @@ def build_action_summary_notification(metrics: dict[str, object]) -> str:
         values = metrics.get(key, [])
         if not isinstance(values, list):
             values = []
-        visible_values = [str(value) for value in values[:5] if str(value).strip()]
+        visible_values = [_format_action_summary_item(str(value)) for value in values[:5] if str(value).strip()]
         if not visible_values:
             return []
         return [label, *[f"• {value}" for value in visible_values]]
@@ -655,8 +655,25 @@ def _format_ticker_names(df: pd.DataFrame, *, limit: int = 5) -> list[str]:
         name = str(row.get("name", "") or "").strip()
         if not ticker and not name:
             continue
-        names.append(f"{ticker} {name}".strip())
+        names.append(_format_stock_display(ticker, name))
     return names
+
+
+def _format_stock_display(ticker: str, name: str) -> str:
+    ticker = str(ticker or "").strip()
+    name = str(name or "").strip()
+    if ticker and name:
+        return f"{name} ({ticker})"
+    return name or ticker
+
+
+def _format_action_summary_item(value: str) -> str:
+    text = str(value or "").strip()
+    match = re.match(r"^([0-9A-Z]{2,8}\.(?:TW|TWO))\s+(\S+)(.*)$", text)
+    if not match:
+        return text
+    ticker, name, rest = match.groups()
+    return f"{_format_stock_display(ticker, name)}{rest}".strip()
 
 
 def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, list[str]]:
@@ -721,7 +738,7 @@ def _collect_new_additions_action_summary(new_additions_tracking_csv: Path) -> d
         name = str(row.get("name", "") or "").strip()
         action = str(row.get("next_action", "") or "").strip()
         if ticker:
-            items.append(f"{ticker} {name} {action}".strip())
+            items.append(f"{_format_stock_display(ticker, name)} {action}".strip())
     return {"new_addition_action_tickers": items}
 
 
@@ -740,7 +757,7 @@ def _collect_trial_ledger_action_summary(trial_ledger_csv: Path) -> dict[str, li
         action = str(row.get("next_action", "") or "").strip()
         if ticker:
             status_label = f"{status}/{decision_state}" if decision_state else status
-            items.append(f"{ticker} {name} {status_label} {action}".strip())
+            items.append(f"{_format_stock_display(ticker, name)} {status_label} {action}".strip())
     return {"trial_ledger_action_tickers": items}
 
 

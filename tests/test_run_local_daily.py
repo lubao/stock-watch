@@ -80,9 +80,9 @@ class RunLocalDailyTests(unittest.TestCase):
         )
 
         self.assertIn("📌 今日動作摘要", message)
-        self.assertIn("🟢 可試單：(小部位研究單，先驗證不重壓)\n• 6161.TWO 捷波", message)
-        self.assertIn("🆕 新A追蹤：(新進A級，先觀察角色與買點)\n• 3213.TWO 茂訊 可試單", message)
-        self.assertIn("🧪 試單追蹤：(已列試單，檢查轉強或失效)\n• 3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究", message)
+        self.assertIn("🟢 可試單：(小部位研究單，先驗證不重壓)\n• 捷波 (6161.TWO)", message)
+        self.assertIn("🆕 新A追蹤：(新進A級，先觀察角色與買點)\n• 茂訊 (3213.TWO) 可試單", message)
+        self.assertIn("🧪 試單追蹤：(已列試單，檢查轉強或失效)\n• 茂訊 (3213.TWO) active_trial/risk_watch 第一筆 1/3 可研究", message)
         self.assertIn("💼 持股落袋：(持股達收成條件，考慮分批)\n• 英業達 (2356)", message)
         self.assertNotIn("6161.TWO 捷波, 3515.TW 華擎", message)
 
@@ -200,10 +200,10 @@ class RunLocalDailyTests(unittest.TestCase):
         self.assertEqual(metrics["spec_risk_watch_rows"], 1)
         self.assertEqual(metrics["spec_risk_top_tickers"], ["3057.TW", "6669.TW"])
         self.assertEqual(metrics["watchlist_artifact_freshness_status"], "current")
-        self.assertEqual(metrics["action_trial_tickers"], ["6161.TWO 捷波"])
-        self.assertEqual(metrics["action_pullback_tickers"], ["4966.TWO 譜瑞-KY"])
-        self.assertEqual(metrics["action_wait_strength_tickers"], ["3005.TW 神基"])
-        self.assertEqual(metrics["action_cooldown_tickers"], ["6525.TW 捷敏-KY"])
+        self.assertEqual(metrics["action_trial_tickers"], ["捷波 (6161.TWO)"])
+        self.assertEqual(metrics["action_pullback_tickers"], ["譜瑞-KY (4966.TWO)"])
+        self.assertEqual(metrics["action_wait_strength_tickers"], ["神基 (3005.TW)"])
+        self.assertEqual(metrics["action_cooldown_tickers"], ["捷敏-KY (6525.TW)"])
         self.assertEqual(metrics["portfolio_trim_tickers"], ["英業達 (2356)"])
 
     def test_update_quality_value_tracking_writes_lifecycle_and_review_outputs(self) -> None:
