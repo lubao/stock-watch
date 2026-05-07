@@ -308,6 +308,10 @@ def sanitize_telegram_error(message: str) -> str:
     return re.sub(r"/bot[^/\s]+", "/bot<redacted>", message)
 
 
+def telegram_display_text(message: str) -> str:
+    return re.sub(r"\b([0-9A-Z]{2,8})\.(TW|TWO)\b", r"\1．\2", message)
+
+
 def _make_daily_price_provider(name: str):
     if name == "yahoo":
         return YahooFinancePriceProvider(yf_module=yf, logger=logger)
@@ -2519,7 +2523,7 @@ def send_telegram_message(message: str) -> None:
         logger.warning("Telegram not configured. Skip notification.")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    for part in split_message(message, CONFIG.max_message_length):
+    for part in split_message(telegram_display_text(message), CONFIG.max_message_length):
         for chat_id in TELEGRAM_CHAT_IDS:
             for attempt in range(1, TELEGRAM_SEND_ATTEMPTS + 1):
                 try:

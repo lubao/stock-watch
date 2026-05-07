@@ -61,6 +61,7 @@ from daily_theme_watchlist import (
     select_short_term_candidates,
     select_push_candidates,
     sanitize_telegram_error,
+    telegram_display_text,
     split_message,
     CONFIG,
     _DAILY_OHLCV_CACHE,
@@ -1089,6 +1090,14 @@ class TelegramChatIdTests(unittest.TestCase):
         self.assertEqual(
             sanitize_telegram_error(error),
             "Max retries exceeded with url: /bot<redacted>/sendMessage",
+        )
+
+    def test_telegram_display_text_prevents_tw_tickers_from_becoming_links(self) -> None:
+        message = "🟢 可試單：6161.TWO 捷波, 8261.TW 富鼎, NVDA"
+
+        self.assertEqual(
+            telegram_display_text(message),
+            "🟢 可試單：6161．TWO 捷波, 8261．TW 富鼎, NVDA",
         )
 
 
