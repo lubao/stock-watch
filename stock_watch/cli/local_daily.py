@@ -31,6 +31,7 @@ PORTFOLIO_RUNTIME_METRICS_MD = THEME_OUTDIR / "portfolio_runtime_metrics.md"
 REPORT_SYNC_METRICS_JSON = THEME_OUTDIR / "report_sync_metrics.json"
 SHADOW_OPEN_NOT_CHASE_TRACKING_MD = THEME_OUTDIR / "shadow_open_not_chase_tracking.md"
 SHADOW_OPEN_NOT_CHASE_TRACKING_CSV = THEME_OUTDIR / "shadow_open_not_chase_tracking.csv"
+LIQUIDITY_DIAGNOSTICS_MD = VERIFICATION_OUTDIR / "liquidity_diagnostics.md"
 DAILY_RANK_CSV = THEME_OUTDIR / "daily_rank.csv"
 QUALITY_VALUE_ENTRY_PLAN_CSV = THEME_OUTDIR / "quality_value_entry_plan.csv"
 QUALITY_VALUE_SIMILAR_SCOUT_CSV = THEME_OUTDIR / "quality_value_similar_scout.csv"
@@ -613,6 +614,137 @@ def write_shadow_open_not_chase_tracking_outputs(
         ),
         encoding="utf-8",
     )
+
+
+def _ticker_log_filename(ticker: str) -> str:
+    return f"{str(ticker or '').strip().replace('.', '_')}.csv"
+
+
+def render_liquidity_diagnostics_markdown(
+    summary: pd.DataFrame,
+    *,
+    generated_at: str,
+) -> str:
+    lines = [
+        "# Liquidity Diagnostics",
+        f"- Generated: {generated_at}",
+        "- Buckets use `to20_m = close * avg_vol20 / 1e6` from per-ticker logs at `signal_date`.",
+        "",
+    ]
+    if summary is None or summary.empty:
+        lines.extend(["- None", ""])
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            "## Outcome By Liquidity Bucket",
+            "",
+            "| Watch | Horizon | Bucket | N | Win% | AvgRet% | MedRet% |",
+            "| --- | ---: | --- | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for _, row in summary.iterrows():
+        lines.append(
+            f"| {row.get('watch_type', '')} | {int(row.get('horizon_days', 0) or 0)} | {row.get('liq_bucket', '')} | "
+            f"{int(row.get('n', 0) or 0)} | {_format_pct(row.get('win_rate_pct'))} | "
+            f"{_format_pct(row.get('avg_ret_pct'))} | {_format_pct(row.get('med_ret_pct'))} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _format_pct(value: object) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        return ""
+    if pd.isna(number):
+        return ""
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
+def write_liquidity_diagnostics_outputs(
+    *,
+    theme_outdir: Path = THEME_OUTDIR,
+    verification_outdir: Path = VERIFICATION_OUTDIR,
+    output_md: Path = LIQUIDITY_DIAGNOSTICS_MD,
+) -> None:
+    outcomes = _load_csv_safely(verification_outdir / "reco_outcomes.csv")
+    if outcomes.empty or "realized_ret_pct" not in outcomes.columns:
+        output_md.parent.mkdir(parents=True, exist_ok=True)
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        output_md.write_text(render_liquidity_diagnostics_markdown(pd.DataFrame(), generated_at=generated_at), encoding="utf-8")
+        return
+
+    work = outcomes.copy()
+    work = work[work["status"].astype(str).isin(["ok"])].copy() if "status" in work.columns else work
+    work["_ret"] = pd.to_numeric(work.get("realized_ret_pct"), errors="coerce")
+    work = work.dropna(subset=["_ret"])
+    if work.empty:
+        output_md.parent.mkdir(parents=True, exist_ok=True)
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        output_md.write_text(render_liquidity_diagnostics_markdown(pd.DataFrame(), generated_at=generated_at), encoding="utf-8")
+        return
+
+    def _to20_for_row(row: pd.Series) -> float | None:
+        ticker = str(row.get("ticker", "") or "").strip()
+        signal_date = str(row.get("signal_date", "") or "").strip()
+        if not ticker or not signal_date:
+            return None
+        log_path = theme_outdir / "logs" / _ticker_log_filename(ticker)
+        if not log_path.exists():
+            return None
+        df = _load_csv_safely(log_path)
+        if df.empty or "date" not in df.columns:
+            return None
+        match = df[df["date"].astype(str) == signal_date].head(1)
+        if match.empty:
+            return None
+        close = pd.to_numeric(match["close"], errors="coerce").iloc[0]
+        avg_vol20 = pd.to_numeric(match.get("avg_vol20"), errors="coerce").iloc[0] if "avg_vol20" in match.columns else pd.NA
+        try:
+            value = float(close) * float(avg_vol20) / 1e6
+        except Exception:
+            return None
+        if pd.isna(value) or value <= 0:
+            return None
+        return float(value)
+
+    work["_to20_m"] = work.apply(_to20_for_row, axis=1)
+    work["_to20_m"] = pd.to_numeric(work["_to20_m"], errors="coerce")
+
+    def _bucket(val: object) -> str:
+        try:
+            number = float(val)
+        except Exception:
+            return "unknown"
+        if pd.isna(number) or number <= 0:
+            return "unknown"
+        if number < 10:
+            return "<10M"
+        if number < 30:
+            return "10–30M"
+        if number < 100:
+            return "30–100M"
+        return ">=100M"
+
+    work["liq_bucket"] = work["_to20_m"].apply(_bucket)
+    work["_win"] = work["_ret"] > 0
+    grouped = (
+        work.groupby(["watch_type", "horizon_days", "liq_bucket"], dropna=False)
+        .agg(
+            n=("_ret", "size"),
+            win_rate_pct=("_win", lambda s: float(s.mean()) * 100 if len(s) else float("nan")),
+            avg_ret_pct=("_ret", "mean"),
+            med_ret_pct=("_ret", "median"),
+        )
+        .reset_index()
+        .sort_values(by=["watch_type", "horizon_days", "liq_bucket"], ascending=[True, True, True])
+    )
+
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    output_md.parent.mkdir(parents=True, exist_ok=True)
+    output_md.write_text(render_liquidity_diagnostics_markdown(grouped, generated_at=generated_at), encoding="utf-8")
 
 
 def _watchlist_artifact_freshness(theme_outdir: Path) -> dict[str, str]:
@@ -1915,6 +2047,7 @@ def render_local_status_markdown(
             f"- Verification report: `{verification_outdir_str('verification_report.md')}`",
             f"- Verification runtime: `{verification_outdir_str('runtime_metrics.md')}`",
             f"- Outcomes summary: `{verification_outdir_str('outcomes_summary.md')}`",
+            f"- Liquidity diagnostics: `{verification_outdir_str('liquidity_diagnostics.md')}`",
             f"- Feedback sensitivity: `{verification_outdir_str('feedback_weight_sensitivity.md')}`",
             f"- Shadow tracking: `{theme_outdir_str('shadow_open_not_chase_tracking.md')}`",
         ]
@@ -1947,6 +2080,11 @@ def write_local_status_dashboard(
         tracking_md=theme_outdir / "shadow_open_not_chase_tracking.md",
         tracking_csv=theme_outdir / "shadow_open_not_chase_tracking.csv",
     )
+    write_liquidity_diagnostics_outputs(
+        theme_outdir=theme_outdir,
+        verification_outdir=verification_outdir,
+        output_md=verification_outdir / "liquidity_diagnostics.md",
+    )
     metrics = collect_status_metrics(theme_outdir, verification_outdir)
     payload = {
         "generated_at": generated_at,
@@ -1977,6 +2115,7 @@ def write_local_status_dashboard(
             "verification_report": str(verification_outdir / "verification_report.md"),
             "verification_runtime": str(verification_outdir / "runtime_metrics.md"),
             "outcomes_summary": str(verification_outdir / "outcomes_summary.md"),
+            "liquidity_diagnostics": str(verification_outdir / "liquidity_diagnostics.md"),
             "feedback_sensitivity": str(verification_outdir / "feedback_weight_sensitivity.md"),
             "shadow_tracking": str(theme_outdir / "shadow_open_not_chase_tracking.md"),
             "shadow_tracking_csv": str(theme_outdir / "shadow_open_not_chase_tracking.csv"),

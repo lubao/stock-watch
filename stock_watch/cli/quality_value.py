@@ -670,11 +670,32 @@ def build_entry_plan(export: pd.DataFrame) -> pd.DataFrame:
     for column in ["quality_score", "value_score"]:
         if column not in work.columns:
             work[column] = 0
+    if "avg_vol20" not in work.columns:
+        work["avg_vol20"] = pd.NA
+    if "volume_ratio20" not in work.columns:
+        work["volume_ratio20"] = pd.NA
+    work["_to20_m"] = pd.to_numeric(work.get("close"), errors="coerce") * pd.to_numeric(work.get("avg_vol20"), errors="coerce") / 1e6
     rows = [_entry_plan_for_row(row) for _, row in work.iterrows()]
     plan = pd.DataFrame(rows, columns=ENTRY_PLAN_COLUMNS)
     if plan.empty:
         return plan
     plan["decision_priority"] = pd.to_numeric(plan["decision_priority"], errors="coerce").fillna(0)
+    to20_map = work.set_index("ticker")["_to20_m"].to_dict()
+    vr20_series = pd.to_numeric(work["volume_ratio20"], errors="coerce")
+    vr20_map = pd.Series(vr20_series.values, index=work.get("ticker").astype(str)).to_dict()
+    plan["to20_m"] = plan["ticker"].astype(str).map(to20_map)
+    plan["vr20"] = plan["ticker"].astype(str).map(vr20_map)
+    plan["_to20_m_num"] = pd.to_numeric(plan["to20_m"], errors="coerce")
+    plan["_vr20_num"] = pd.to_numeric(plan["vr20"], errors="coerce")
+    plan["order_hint"] = "限價掛單/分批"
+    plan["max_pos_pct"] = "1.0%"
+    low_to = plan["_to20_m_num"].notna() & (plan["_to20_m_num"] < 10)
+    mid_to = plan["_to20_m_num"].notna() & (plan["_to20_m_num"] < 30)
+    low_vr = plan["_vr20_num"].notna() & (plan["_vr20_num"] < 0.9)
+    plan.loc[mid_to, "max_pos_pct"] = "0.5%"
+    plan.loc[low_to, "max_pos_pct"] = "0.3%"
+    plan.loc[low_vr, "order_hint"] = "先等量/不追價"
+    plan = plan.drop(columns=["_to20_m_num", "_vr20_num"], errors="ignore")
     return plan.sort_values(by=["decision_priority", "ticker"], ascending=[False, True]).reset_index(drop=True)
 
 
@@ -682,14 +703,15 @@ def _entry_plan_table(plan: pd.DataFrame, *, limit: int = 12) -> list[str]:
     if plan.empty:
         return ["- None"]
     lines = [
-        "| Ticker | Name | Priority | Bias | Buy Zone | Stop | Add Rule | Trim Rule |",
-        "| --- | --- | ---: | --- | ---: | ---: | --- | --- |",
+        "| Ticker | Name | Priority | Bias | Buy Zone | Stop | To20(M) | Vol/20 | MaxPos | Order | Add Rule | Trim Rule |",
+        "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
     ]
     for _, row in plan.head(limit).iterrows():
         lines.append(
             f"| {row.get('ticker', '')} | {row.get('name', '')} | {_format_number(row.get('decision_priority'))} | "
             f"{row.get('entry_bias', '')} | {_zone_text(row.get('buy_zone_low'), row.get('buy_zone_high'))} | "
-            f"{_format_number(row.get('stop_loss'))} | {row.get('add_rule', '')} | {row.get('trim_rule', '')} |"
+            f"{_format_number(row.get('stop_loss'))} | {_format_number(row.get('to20_m'))} | {_format_number(row.get('vr20'))} | "
+            f"{row.get('max_pos_pct', '')} | {row.get('order_hint', '')} | {row.get('add_rule', '')} | {row.get('trim_rule', '')} |"
         )
     return lines
 
@@ -794,15 +816,23 @@ def _markdown_table(df: pd.DataFrame, *, limit: int = 15) -> list[str]:
     if df.empty:
         return ["- None"]
     lines = [
-        "| Rank | Ticker | Name | Close | 20D | Vol/20 | Setup | Risk | Action | Reason |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Rank | Ticker | Name | Close | 20D | Vol/20 | To20(M) | Setup | Risk | Action | Reason |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for _, row in df.head(limit).iterrows():
+        to20 = ""
+        try:
+            close = float(row.get("close"))
+            avg_vol20 = float(row.get("avg_vol20"))
+            if close > 0 and avg_vol20 > 0:
+                to20 = f"{(close * avg_vol20 / 1e6):.1f}".rstrip("0").rstrip(".")
+        except Exception:
+            to20 = ""
         rank = "" if pd.isna(row.get("rank")) else str(int(float(row.get("rank"))))
         lines.append(
             f"| {rank} | {row.get('ticker', '')} | {row.get('name', '')} | "
             f"{_format_number(row.get('close'))} | {_format_with_suffix(row.get('ret20_pct'), '%')} | "
-            f"{_format_number(row.get('volume_ratio20'))} | {_format_number(row.get('setup_score'), 0)} | "
+            f"{_format_number(row.get('volume_ratio20'))} | {to20} | {_format_number(row.get('setup_score'), 0)} | "
             f"{_format_number(row.get('risk_score'), 0)} | {row.get('_action', '')} | {row.get('_reason', '')} |"
         )
     return lines
