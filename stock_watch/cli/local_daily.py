@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from stock_watch.paths import REPO_ROOT
 from stock_watch.paths import THEME_OUTDIR
 from stock_watch.paths import VERIFICATION_OUTDIR
 from stock_watch.cli.weekly_review import build_data_quality_gate
@@ -48,6 +49,7 @@ QUALITY_VALUE_TRIAL_LEDGER_MD = THEME_OUTDIR / "quality_value_trial_ledger.md"
 QUALITY_VALUE_TRIAL_TICKERS = ("3213.TWO",)
 DEFAULT_LOCAL_TELEGRAM_CHAT_IDS = "7758949915"
 DEFAULT_LIQUIDITY_POLICY = "per_bucket"
+REPO_CONFIG_JSON = REPO_ROOT / "config.json"
 
 
 def _get_env_float(name: str, default: float) -> float:
@@ -68,6 +70,83 @@ def _get_env_text(name: str, default: str) -> str:
     if raw is None:
         return default
     return str(raw).strip() or default
+
+
+_REPO_CONFIG_CACHE: dict[str, object] | None = None
+
+
+def _load_repo_config() -> dict[str, object]:
+    global _REPO_CONFIG_CACHE
+    if _REPO_CONFIG_CACHE is not None:
+        return _REPO_CONFIG_CACHE
+    try:
+        payload = json.loads(REPO_CONFIG_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    _REPO_CONFIG_CACHE = payload
+    return payload
+
+
+def _get_liquidity_config() -> dict[str, object]:
+    config = _load_repo_config()
+    raw = config.get("liquidity", {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _get_liquidity_text(env_name: str, default: str, config_key: str) -> str:
+    raw = os.getenv(env_name)
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+    value = _get_liquidity_config().get(config_key)
+    return str(value).strip() if value is not None and str(value).strip() else default
+
+
+def _get_liquidity_float(env_name: str, default: float, config_key: str) -> float:
+    raw = os.getenv(env_name)
+    if raw is not None and str(raw).strip():
+        try:
+            return float(str(raw).strip())
+        except Exception:
+            return default
+    value = _get_liquidity_config().get(config_key)
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except Exception:
+        return default
+    return default if pd.isna(number) else number
+
+
+def _resolve_liquidity_policy_default(default: str = DEFAULT_LIQUIDITY_POLICY) -> str:
+    raw = os.getenv("STOCK_WATCH_LIQUIDITY_POLICY")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+    value = _get_liquidity_config().get("policy_default")
+    return str(value).strip() if value is not None and str(value).strip() else default
+
+
+def _resolve_liquidity_policy_dashboard(default: str = DEFAULT_LIQUIDITY_POLICY) -> str:
+    raw = os.getenv("STOCK_WATCH_LIQUIDITY_POLICY_DASHBOARD")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+    raw_default = os.getenv("STOCK_WATCH_LIQUIDITY_POLICY")
+    if raw_default is not None and str(raw_default).strip():
+        return str(raw_default).strip()
+    value = _get_liquidity_config().get("policy_dashboard")
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    return _resolve_liquidity_policy_default(default)
+
+
+def _resolve_liquidity_policy_notify(default: str = "tag_only") -> str:
+    raw = os.getenv("STOCK_WATCH_LIQUIDITY_POLICY_NOTIFY")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+    value = _get_liquidity_config().get("policy_notify")
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    return default
 
 MODE_STEPS: dict[str, tuple[str, ...]] = {
     "preopen": ("watchlist", "verification"),
@@ -239,7 +318,7 @@ def send_quality_value_notification(
 ) -> None:
     if not entry_plan_csv.exists() and not portfolio_report_md.exists() and not new_additions_tracking_csv.exists() and not trial_ledger_csv.exists():
         return
-    notify_policy = _get_env_text("STOCK_WATCH_LIQUIDITY_POLICY_NOTIFY", "tag_only")
+    notify_policy = _resolve_liquidity_policy_notify()
     metrics = {
         **_collect_quality_value_action_summary(entry_plan_csv, liquidity_policy_override=notify_policy),
         **_collect_new_additions_action_summary(new_additions_tracking_csv),
@@ -973,16 +1052,21 @@ def _collect_quality_value_action_summary(
     liquidity_policy = (
         str(liquidity_policy_override).strip().lower()
         if liquidity_policy_override is not None
-        else _get_env_text(
-            "STOCK_WATCH_LIQUIDITY_POLICY_DASHBOARD",
-            _get_env_text("STOCK_WATCH_LIQUIDITY_POLICY", DEFAULT_LIQUIDITY_POLICY),
-        ).lower()
+        else _resolve_liquidity_policy_dashboard().lower()
     )
-    volume_ratio_threshold = _get_env_float("STOCK_WATCH_LIQUIDITY_VR20_THRESHOLD", 0.9)
-    turnover_hard_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_THRESHOLD_M", 20.0)
-    turnover_trial_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_TRIAL_THRESHOLD_M", 30.0)
-    turnover_pullback_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_PULLBACK_THRESHOLD_M", 10.0)
-    turnover_wait_strength_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_WAIT_STRENGTH_THRESHOLD_M", 20.0)
+    volume_ratio_threshold = _get_liquidity_float("STOCK_WATCH_LIQUIDITY_VR20_THRESHOLD", 0.9, "vr20_threshold")
+    turnover_hard_threshold_m = _get_liquidity_float("STOCK_WATCH_LIQUIDITY_TO20_THRESHOLD_M", 20.0, "to20_threshold_m")
+    turnover_trial_threshold_m = _get_liquidity_float("STOCK_WATCH_LIQUIDITY_TO20_TRIAL_THRESHOLD_M", 30.0, "to20_trial_threshold_m")
+    turnover_pullback_threshold_m = _get_liquidity_float(
+        "STOCK_WATCH_LIQUIDITY_TO20_PULLBACK_THRESHOLD_M",
+        10.0,
+        "to20_pullback_threshold_m",
+    )
+    turnover_wait_strength_threshold_m = _get_liquidity_float(
+        "STOCK_WATCH_LIQUIDITY_TO20_WAIT_STRENGTH_THRESHOLD_M",
+        20.0,
+        "to20_wait_strength_threshold_m",
+    )
     if not entry_plan_csv.exists():
         return {
             "action_trial_tickers": [],
@@ -1879,10 +1963,7 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
     spec_risk_metrics = _collect_spec_risk_metrics(daily_rank_csv)
     action_summary = _collect_quality_value_action_summary(
         theme_outdir / "quality_value_entry_plan.csv",
-        liquidity_policy_override=_get_env_text(
-            "STOCK_WATCH_LIQUIDITY_POLICY_DASHBOARD",
-            _get_env_text("STOCK_WATCH_LIQUIDITY_POLICY", DEFAULT_LIQUIDITY_POLICY),
-        ),
+        liquidity_policy_override=_resolve_liquidity_policy_dashboard(),
     )
     portfolio_summary = _collect_portfolio_action_summary(theme_outdir / "portfolio_report.md")
     new_additions_summary = _collect_new_additions_action_summary(theme_outdir / "quality_value_new_additions_tracking.csv")

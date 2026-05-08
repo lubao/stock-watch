@@ -58,5 +58,15 @@
     "correction_midlong_top_n": 3,
     "min_correction_ok_samples": 10,
     "new_watch_spotlight_limit": 3
+  },
+  "liquidity": {
+    "policy_default": "per_bucket",
+    "policy_notify": "tag_only",
+    "policy_dashboard": "per_bucket",
+    "vr20_threshold": 0.9,
+    "to20_threshold_m": 20,
+    "to20_trial_threshold_m": 30,
+    "to20_pullback_threshold_m": 10,
+    "to20_wait_strength_threshold_m": 20
   }
 }

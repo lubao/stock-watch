@@ -20,6 +20,24 @@
 - `docs/refactor/STRUCTURE_PLAN.md`
 - `docs/research/STANDARD_TUNING_PROPOSAL_2026_05_05.md`
 
+## 流動性策略（通知 vs 操作）
+
+本 repo 支援「投資視角通知」與「交易視角操作」同時存在：
+
+- Telegram 通知（偏投資）：預設 `tag_only`（不移出桶，只加註流動性/量縮提示）
+- Dashboard / Portfolio（偏交易）：預設 `per_bucket`（低流動性/量縮會進 `量縮先等`）
+
+設定優先序：環境變數 > `config.json:liquidity`。
+
+常用 env：
+
+- `STOCK_WATCH_LIQUIDITY_POLICY_NOTIFY=tag_only`
+- `STOCK_WATCH_LIQUIDITY_POLICY_DASHBOARD=per_bucket`
+- `STOCK_WATCH_LIQUIDITY_VR20_THRESHOLD=0.9`
+- `STOCK_WATCH_LIQUIDITY_TO20_TRIAL_THRESHOLD_M=30`
+- `STOCK_WATCH_LIQUIDITY_TO20_PULLBACK_THRESHOLD_M=10`
+- `STOCK_WATCH_LIQUIDITY_TO20_WAIT_STRENGTH_THRESHOLD_M=20`
+
 ## 安裝
 
 - 固定 venv：`export VENV_PY=/Users/tokuzfunpi/codes/nvidia/311env/bin/python`
