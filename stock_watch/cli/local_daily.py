@@ -239,8 +239,9 @@ def send_quality_value_notification(
 ) -> None:
     if not entry_plan_csv.exists() and not portfolio_report_md.exists() and not new_additions_tracking_csv.exists() and not trial_ledger_csv.exists():
         return
+    notify_policy = _get_env_text("STOCK_WATCH_LIQUIDITY_POLICY_NOTIFY", "tag_only")
     metrics = {
-        **_collect_quality_value_action_summary(entry_plan_csv),
+        **_collect_quality_value_action_summary(entry_plan_csv, liquidity_policy_override=notify_policy),
         **_collect_new_additions_action_summary(new_additions_tracking_csv),
         **_collect_trial_ledger_action_summary(trial_ledger_csv),
     }
@@ -964,8 +965,19 @@ def _apply_action_price_label(text: str, price_label: str) -> str:
     return re.sub(r"(?<=｜)買 (?=[0-9])", f"{price_label} ", text)
 
 
-def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, list[str]]:
-    liquidity_policy = _get_env_text("STOCK_WATCH_LIQUIDITY_POLICY", DEFAULT_LIQUIDITY_POLICY).lower()
+def _collect_quality_value_action_summary(
+    entry_plan_csv: Path,
+    *,
+    liquidity_policy_override: str | None = None,
+) -> dict[str, list[str]]:
+    liquidity_policy = (
+        str(liquidity_policy_override).strip().lower()
+        if liquidity_policy_override is not None
+        else _get_env_text(
+            "STOCK_WATCH_LIQUIDITY_POLICY_DASHBOARD",
+            _get_env_text("STOCK_WATCH_LIQUIDITY_POLICY", DEFAULT_LIQUIDITY_POLICY),
+        ).lower()
+    )
     volume_ratio_threshold = _get_env_float("STOCK_WATCH_LIQUIDITY_VR20_THRESHOLD", 0.9)
     turnover_hard_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_THRESHOLD_M", 20.0)
     turnover_trial_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_TRIAL_THRESHOLD_M", 30.0)
@@ -1865,7 +1877,13 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
     quality_value_runtime = _load_runtime_metrics(theme_outdir / "quality_value_metrics.json")
     verification_runtime = _load_runtime_metrics(verification_outdir / "runtime_metrics.json")
     spec_risk_metrics = _collect_spec_risk_metrics(daily_rank_csv)
-    action_summary = _collect_quality_value_action_summary(theme_outdir / "quality_value_entry_plan.csv")
+    action_summary = _collect_quality_value_action_summary(
+        theme_outdir / "quality_value_entry_plan.csv",
+        liquidity_policy_override=_get_env_text(
+            "STOCK_WATCH_LIQUIDITY_POLICY_DASHBOARD",
+            _get_env_text("STOCK_WATCH_LIQUIDITY_POLICY", DEFAULT_LIQUIDITY_POLICY),
+        ),
+    )
     portfolio_summary = _collect_portfolio_action_summary(theme_outdir / "portfolio_report.md")
     new_additions_summary = _collect_new_additions_action_summary(theme_outdir / "quality_value_new_additions_tracking.csv")
     trial_ledger_summary = _collect_trial_ledger_action_summary(theme_outdir / "quality_value_trial_ledger.csv")
