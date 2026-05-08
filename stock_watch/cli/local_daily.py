@@ -46,6 +46,27 @@ QUALITY_VALUE_TRIAL_LEDGER_CSV = THEME_OUTDIR / "quality_value_trial_ledger.csv"
 QUALITY_VALUE_TRIAL_LEDGER_MD = THEME_OUTDIR / "quality_value_trial_ledger.md"
 QUALITY_VALUE_TRIAL_TICKERS = ("3213.TWO",)
 DEFAULT_LOCAL_TELEGRAM_CHAT_IDS = "7758949915"
+DEFAULT_LIQUIDITY_POLICY = "per_bucket"
+
+
+def _get_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(str(raw).strip())
+    except Exception:
+        return default
+    if pd.isna(value):
+        return default
+    return value
+
+
+def _get_env_text(name: str, default: str) -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip() or default
 
 MODE_STEPS: dict[str, tuple[str, ...]] = {
     "preopen": ("watchlist", "verification"),
@@ -696,6 +717,27 @@ def _format_ticker_names(df: pd.DataFrame, *, price_label: str = "買", limit: i
     return names
 
 
+def _format_ticker_names_with_note(
+    df: pd.DataFrame,
+    *,
+    price_label: str,
+    note_by_ticker: dict[str, str],
+    limit: int = 5,
+) -> list[str]:
+    if df.empty:
+        return []
+    names: list[str] = []
+    for _, row in df.head(limit).iterrows():
+        ticker = str(row.get("ticker", "") or "").strip()
+        name = str(row.get("name", "") or "").strip()
+        if not ticker and not name:
+            continue
+        base = _format_stock_price_display(row, ticker=ticker, name=name, price_label=price_label)
+        note = note_by_ticker.get(ticker, "")
+        names.append(f"{base}｜{note}" if note else base)
+    return names
+
+
 def _format_stock_display(ticker: str, name: str) -> str:
     ticker = str(ticker or "").strip()
     name = str(name or "").strip()
@@ -791,8 +833,12 @@ def _apply_action_price_label(text: str, price_label: str) -> str:
 
 
 def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, list[str]]:
-    volume_ratio_threshold = 0.9
-    turnover_threshold_m = 30.0
+    liquidity_policy = _get_env_text("STOCK_WATCH_LIQUIDITY_POLICY", DEFAULT_LIQUIDITY_POLICY).lower()
+    volume_ratio_threshold = _get_env_float("STOCK_WATCH_LIQUIDITY_VR20_THRESHOLD", 0.9)
+    turnover_hard_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_THRESHOLD_M", 20.0)
+    turnover_trial_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_TRIAL_THRESHOLD_M", 30.0)
+    turnover_pullback_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_PULLBACK_THRESHOLD_M", 10.0)
+    turnover_wait_strength_threshold_m = _get_env_float("STOCK_WATCH_LIQUIDITY_TO20_WAIT_STRENGTH_THRESHOLD_M", 20.0)
     if not entry_plan_csv.exists():
         return {
             "action_trial_tickers": [],
@@ -851,25 +897,19 @@ def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, lis
         return ratios.notna() & (ratios < volume_ratio_threshold)
 
     def _is_low_turnover(df: pd.DataFrame) -> pd.Series:
-        if df.empty or not turnover_by_ticker_m:
-            return pd.Series([False] * len(df), index=df.index)
-        tickers = df.get("ticker", pd.Series([""] * len(df), index=df.index)).astype(str).str.strip()
-        turnovers = tickers.map(turnover_by_ticker_m)
-        turnovers = pd.to_numeric(turnovers, errors="coerce")
-        return turnovers.notna() & (turnovers < turnover_threshold_m)
+        return _mask_low_turnover_bucket(df, turnover_hard_threshold_m)
 
-    def _low_liquidity_note(row: pd.Series) -> str:
-        ticker = str(row.get("ticker", "") or "").strip()
+    def _liquidity_note(ticker: str, *, turnover_threshold_m: float) -> str:
         notes: list[str] = []
         turnover = turnover_by_ticker_m.get(ticker)
-        if turnover is not None and turnover < turnover_threshold_m:
+        if turnover is not None and turnover_threshold_m > 0 and turnover < turnover_threshold_m:
             notes.append(f"流動性低 to20={turnover:.1f}M".rstrip("0").rstrip("."))
         ratio = volume_ratio_by_ticker.get(ticker)
         if ratio is not None and ratio < volume_ratio_threshold:
             notes.append(f"量縮 vr20={ratio:.2f}".rstrip("0").rstrip("."))
         return "、".join(notes) or "流動性偏低"
 
-    def _format_low_liquidity_items(df: pd.DataFrame, *, price_label: str) -> list[str]:
+    def _format_low_liquidity_items(df: pd.DataFrame, *, price_label: str, turnover_threshold_m: float) -> list[str]:
         if df.empty:
             return []
         items: list[str] = []
@@ -879,7 +919,7 @@ def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, lis
             if not ticker and not name:
                 continue
             base = _format_stock_price_display(row, ticker=ticker, name=name, price_label=price_label)
-            items.append(f"{base}｜{_low_liquidity_note(row)}")
+            items.append(f"{base}｜{_liquidity_note(ticker, turnover_threshold_m=turnover_threshold_m)}")
         return items
 
     trial_df = work[bias.isin(["分批試單", "研究試單"])].copy()
@@ -887,26 +927,78 @@ def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, lis
     wait_strength_df = work[bias == "等轉強"].copy()
     cooldown_df = work[bias == "等待降溫"].copy()
 
-    low_liquidity_frames: list[pd.DataFrame] = []
-    for label_df in [trial_df, pullback_df, wait_strength_df, cooldown_df]:
-        mask = _is_low_liquidity(label_df) | _is_low_turnover(label_df)
-        if mask.any():
-            low_liquidity_frames.append(label_df[mask].copy())
-            label_df.drop(index=label_df[mask].index, inplace=True)
+    def _mask_low_turnover_bucket(df: pd.DataFrame, threshold_m: float) -> pd.Series:
+        if df.empty or not turnover_by_ticker_m:
+            return pd.Series([False] * len(df), index=df.index)
+        if threshold_m <= 0:
+            return pd.Series([False] * len(df), index=df.index)
+        tickers = df.get("ticker", pd.Series([""] * len(df), index=df.index)).astype(str).str.strip()
+        turnovers = pd.to_numeric(tickers.map(turnover_by_ticker_m), errors="coerce")
+        return turnovers.notna() & (turnovers < threshold_m)
 
-    low_liquidity_items: list[str] = []
-    if low_liquidity_frames:
-        combined = pd.concat(low_liquidity_frames, ignore_index=True)
-        if "decision_priority" in combined.columns:
-            combined["_decision_priority"] = pd.to_numeric(combined["decision_priority"], errors="coerce").fillna(0)
-            combined = combined.sort_values(by=["_decision_priority"], ascending=[False])
-        low_liquidity_items = _format_low_liquidity_items(combined, price_label="等量再說")
+    low_liquidity_frames: list[pd.DataFrame] = []
+    if liquidity_policy in {"tag_only", "tags", "tag"}:
+        low_liquidity_items = []
+        tag_turnover_threshold_m = (
+            max(turnover_hard_threshold_m, turnover_trial_threshold_m, turnover_pullback_threshold_m, turnover_wait_strength_threshold_m)
+            if liquidity_policy in {"tag_only", "tags", "tag"}
+            else turnover_hard_threshold_m
+        )
+    else:
+        if liquidity_policy in {"per_bucket", "bucket"}:
+            bucket_turnover_thresholds = {
+                "trial": turnover_trial_threshold_m,
+                "pullback": turnover_pullback_threshold_m,
+                "wait_strength": turnover_wait_strength_threshold_m,
+                "cooldown": 0.0,
+            }
+            buckets = [
+                ("trial", trial_df),
+                ("pullback", pullback_df),
+                ("wait_strength", wait_strength_df),
+                ("cooldown", cooldown_df),
+            ]
+            for bucket_name, label_df in buckets:
+                mask = _is_low_liquidity(label_df) | _mask_low_turnover_bucket(label_df, bucket_turnover_thresholds[bucket_name])
+                if mask.any():
+                    low_liquidity_frames.append(label_df[mask].copy())
+                    label_df.drop(index=label_df[mask].index, inplace=True)
+        else:
+            for label_df in [trial_df, pullback_df, wait_strength_df, cooldown_df]:
+                mask = _is_low_liquidity(label_df) | _is_low_turnover(label_df)
+                if mask.any():
+                    low_liquidity_frames.append(label_df[mask].copy())
+                    label_df.drop(index=label_df[mask].index, inplace=True)
+
+        low_liquidity_items = []
+        if low_liquidity_frames:
+            combined = pd.concat(low_liquidity_frames, ignore_index=True)
+            if "decision_priority" in combined.columns:
+                combined["_decision_priority"] = pd.to_numeric(combined["decision_priority"], errors="coerce").fillna(0)
+                combined = combined.sort_values(by=["_decision_priority"], ascending=[False])
+            note_threshold = (
+                max(turnover_hard_threshold_m, turnover_trial_threshold_m, turnover_pullback_threshold_m, turnover_wait_strength_threshold_m)
+                if liquidity_policy in {"per_bucket", "bucket"}
+                else turnover_hard_threshold_m
+            )
+            low_liquidity_items = _format_low_liquidity_items(combined, price_label="等量再說", turnover_threshold_m=note_threshold)
+
+    formatter = _format_ticker_names
+    if liquidity_policy in {"tag_only", "tags", "tag"}:
+        note_by_ticker = {
+            str(ticker).strip(): _liquidity_note(str(ticker).strip(), turnover_threshold_m=tag_turnover_threshold_m)
+            for ticker in set(work.get("ticker", pd.Series(dtype=str)).astype(str).tolist())
+            if str(ticker).strip()
+        }
+        formatter = lambda df, *, price_label, limit=5: _format_ticker_names_with_note(  # type: ignore[misc]
+            df, price_label=price_label, note_by_ticker=note_by_ticker, limit=limit
+        )
 
     return {
-        "action_trial_tickers": _format_ticker_names(trial_df, price_label="買"),
-        "action_pullback_tickers": _format_ticker_names(pullback_df, price_label="等買"),
-        "action_wait_strength_tickers": _format_ticker_names(wait_strength_df, price_label="等強再買"),
-        "action_cooldown_tickers": _format_ticker_names(cooldown_df, price_label="別追，等"),
+        "action_trial_tickers": formatter(trial_df, price_label="買"),
+        "action_pullback_tickers": formatter(pullback_df, price_label="等買"),
+        "action_wait_strength_tickers": formatter(wait_strength_df, price_label="等強再買"),
+        "action_cooldown_tickers": formatter(cooldown_df, price_label="別追，等"),
         "action_low_liquidity_tickers": low_liquidity_items,
     }
 

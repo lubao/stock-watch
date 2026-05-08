@@ -343,6 +343,67 @@ class RunLocalDailyTests(unittest.TestCase):
         self.assertIn("流動性低", metrics["action_low_liquidity_tickers"][0])
         self.assertIn("量縮", metrics["action_low_liquidity_tickers"][0])
 
+    def test_collect_status_metrics_tag_only_policy_keeps_items_in_buckets_with_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            theme_outdir = Path(tmpdir) / "theme_watchlist_daily"
+            verification_outdir = Path(tmpdir) / "verification" / "watchlist_daily"
+            theme_outdir.mkdir(parents=True, exist_ok=True)
+            verification_outdir.mkdir(parents=True, exist_ok=True)
+
+            pd.DataFrame(
+                [
+                    {"ticker": "2330.TW", "spec_risk_score": 0, "spec_risk_label": "正常", "rank": 1, "close": 100.0, "avg_vol20": 10_000_000},
+                    {"ticker": "3005.TW", "spec_risk_score": 0, "spec_risk_label": "正常", "rank": 2, "close": 100.0, "avg_vol20": 100_000},
+                ]
+            ).to_csv(theme_outdir / "daily_rank.csv", index=False)
+            (theme_outdir / "daily_report.md").write_text("# report\n", encoding="utf-8")
+            (theme_outdir / "runtime_metrics.json").write_text(
+                json.dumps({"status": "ok", "wall_seconds": 1.234}),
+                encoding="utf-8",
+            )
+            pd.DataFrame([{"signal_date": "2026-04-23", "watch_type": "short", "ticker": "2330.TW"}]).to_csv(
+                verification_outdir / "reco_snapshots.csv", index=False
+            )
+            pd.DataFrame(
+                [
+                    {
+                        "signal_date": "2026-04-23",
+                        "horizon_days": 1,
+                        "watch_type": "short",
+                        "ticker": "2330.TW",
+                        "status": "ok",
+                    }
+                ]
+            ).to_csv(verification_outdir / "reco_outcomes.csv", index=False)
+            (verification_outdir / "runtime_metrics.json").write_text(
+                json.dumps({"status": "ok", "wall_seconds": 2.5}),
+                encoding="utf-8",
+            )
+            pd.DataFrame(
+                [
+                    {
+                        "ticker": "3005.TW",
+                        "name": "神基",
+                        "decision_priority": 23,
+                        "entry_bias": "等轉強",
+                        "buy_zone_low": 121.5,
+                        "buy_zone_high": 126.0,
+                        "stop_loss": 115.0,
+                    }
+                ]
+            ).to_csv(theme_outdir / "quality_value_entry_plan.csv", index=False)
+            pd.DataFrame([{"ticker": "3005.TW", "name": "神基", "volume_ratio20": 1.2}]).to_csv(
+                theme_outdir / "quality_value_candidates.csv", index=False
+            )
+
+            with patch.dict(os.environ, {"STOCK_WATCH_LIQUIDITY_POLICY": "tag_only"}, clear=False):
+                metrics = collect_status_metrics(theme_outdir, verification_outdir)
+
+        self.assertTrue(metrics["action_wait_strength_tickers"])
+        self.assertIn("神基 (3005.TW)", metrics["action_wait_strength_tickers"][0])
+        self.assertIn("流動性低", metrics["action_wait_strength_tickers"][0])
+        self.assertEqual(metrics["action_low_liquidity_tickers"], [])
+
     def test_update_quality_value_tracking_writes_lifecycle_and_review_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             theme_outdir = Path(tmpdir) / "theme_watchlist_daily"
