@@ -2856,6 +2856,47 @@ class PortfolioStepTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertIn("watchlist", payload["step_timings"])
 
+    def test_build_portfolio_review_df_ignores_zero_share_rows(self) -> None:
+        df_rank = pd.DataFrame(
+            [
+                {
+                    "rank": 1,
+                    "ticker": "3057.TW",
+                    "name": "喬鼎",
+                    "group": "core",
+                    "layer": "midlong_core",
+                    "setup_score": 0,
+                    "risk_score": 0,
+                    "ret5_pct": 0.0,
+                    "ret20_pct": 0.0,
+                    "volume_ratio20": 1.0,
+                    "signals": "NONE",
+                    "regime": "還在觀察",
+                    "date": "2026-04-22",
+                    "close": 21.4,
+                    "spec_risk_label": "正常",
+                    "atr_pct": 2.0,
+                    "volatility_tag": "穩健",
+                    "ma20": 21.0,
+                    "ma60": 20.0,
+                }
+            ]
+        )
+
+        with patch.object(
+            dtw,
+            "PORTFOLIO",
+            pd.DataFrame(
+                [
+                    {"ticker": "3057.TW", "shares": 0, "avg_cost": 18.9, "target_profit_pct": 20},
+                    {"ticker": "2330.TW", "shares": 1, "avg_cost": 900, "target_profit_pct": 15},
+                ]
+            ),
+        ):
+            review = dtw.build_portfolio_review_df(df_rank)
+
+        self.assertTrue((review["ticker"] != "3057.TW").all())
+
 
 if __name__ == "__main__":
     unittest.main()

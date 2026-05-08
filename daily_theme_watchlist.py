@@ -2289,6 +2289,12 @@ def build_portfolio_review_df(
     if PORTFOLIO.empty:
         return pd.DataFrame()
 
+    portfolio = PORTFOLIO.copy()
+    portfolio["shares"] = pd.to_numeric(portfolio.get("shares"), errors="coerce").fillna(0)
+    portfolio = portfolio[portfolio["shares"] > 0].copy()
+    if portfolio.empty:
+        return pd.DataFrame()
+
     market_scenario = None
     if market_regime is not None and us_market is not None:
         market_scenario = build_market_scenario(market_regime, us_market, df_rank)
@@ -2298,7 +2304,7 @@ def build_portfolio_review_df(
         "ret5_pct", "ret20_pct", "volume_ratio20", "atr_pct", "volatility_tag", "ma20", "ma60"
     ]
     market_df = df_rank.reindex(columns=market_cols).copy() if not df_rank.empty else pd.DataFrame(columns=market_cols)
-    review = PORTFOLIO.merge(market_df, on="ticker", how="left")
+    review = portfolio.merge(market_df, on="ticker", how="left")
     review["name"] = review["name"].fillna(review["ticker"].str.split(".").str[0])
 
     review["current_close"] = pd.to_numeric(review["close"], errors="coerce")
