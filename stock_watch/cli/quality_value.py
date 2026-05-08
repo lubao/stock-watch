@@ -768,15 +768,26 @@ def build_entry_plan_notification(entry_plan: pd.DataFrame, *, limit: int = 6) -
     work = entry_plan.copy()
     work["decision_priority"] = pd.to_numeric(work.get("decision_priority"), errors="coerce").fillna(0)
     work = work.sort_values(by=["decision_priority", "ticker"], ascending=[False, True]).head(limit)
-    lines = ["🧭 品質價值買點雷達", "規則：不追過熱；先看買區、停損、加碼條件。"]
+    lines = ["🧭 品質價值買點雷達", "規則：不追過熱；先看買、逃、加碼條件。"]
     for _, row in work.iterrows():
         bias = str(row.get("entry_bias", ""))
         emoji = "🟢" if bias in {"分批試單", "研究試單"} else "🟡" if bias in {"等轉強", "等拉回"} else "🔴"
+        buy_label = _entry_plan_buy_label(bias)
         lines.append(
             f"{emoji} {row.get('name', '')}({row.get('ticker', '')})｜{bias}｜"
-            f"買區 {_zone_text(row.get('buy_zone_low'), row.get('buy_zone_high'))}｜停損 {_format_number(row.get('stop_loss'))}"
+            f"{buy_label} {_zone_text(row.get('buy_zone_low'), row.get('buy_zone_high'))}｜逃 {_format_number(row.get('stop_loss'))}"
         )
     return "\n".join(lines)
+
+
+def _entry_plan_buy_label(entry_bias: str) -> str:
+    if entry_bias == "等拉回":
+        return "等買"
+    if entry_bias == "等轉強":
+        return "等強再買"
+    if entry_bias == "等待降溫":
+        return "別追，等"
+    return "買"
 
 
 def _markdown_table(df: pd.DataFrame, *, limit: int = 15) -> list[str]:

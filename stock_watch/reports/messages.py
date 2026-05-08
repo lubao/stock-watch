@@ -77,7 +77,7 @@ def primary_watch_summary(
     if watch_type == "short":
         actions = top.apply(short_term_action_label, axis=1).value_counts().to_dict()
         if actions.get("等拉回", 0) >= 1:
-            stance = "以等拉回為主，不用急著追第一根。"
+            stance = "等便宜一點再買，不用急著追第一根。"
         elif actions.get("開高不追", 0) >= 1 or actions.get("只觀察不追", 0) >= 1:
             stance = "前排偏熱，重點是看強弱，不是直接追價。"
         else:
@@ -86,7 +86,7 @@ def primary_watch_summary(
 
     actions = top.apply(midlong_action_label, axis=1).value_counts().to_dict()
     if actions.get("續抱", 0) >= 1:
-        stance = "以結構穩、可續抱的趨勢股為主。"
+        stance = "以走勢穩、還能繼續看的股票為主。"
     elif actions.get("可分批", 0) >= 1:
         stance = "可以布局，但偏向分批而不是一次買滿。"
     else:
@@ -147,7 +147,7 @@ def compact_summary_line(
     short_term_action_label: Callable[[pd.Series], str],
     midlong_action_label: Callable[[pd.Series], str],
 ) -> str:
-    action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
+    action = display_action_label(short_term_action_label(row) if watch_type == "short" else midlong_action_label(row))
     role = "短線" if watch_type == "short" else "中線"
     return f"• {format_ticker_name(row)}｜{role}｜{action}"
 
@@ -166,6 +166,35 @@ def _compact_number(value: object) -> str:
     if number == int(number):
         return str(int(number))
     return f"{number:.1f}"
+
+
+def volume_heat_text(row: pd.Series) -> str:
+    ratio = _safe_float(row.get("volume_ratio20"), 0.0)
+    ratio_text = _compact_number(ratio)
+    if ratio <= 0:
+        return "量能：資料不足"
+    if ratio >= 1.2:
+        return f"量能：比平常熱 {ratio_text} 倍"
+    if ratio >= 0.9:
+        return f"量能：接近平常 {ratio_text} 倍"
+    return f"量能：比平常冷 {ratio_text} 倍"
+
+
+def display_action_label(action: object) -> str:
+    text = str(action or "").strip()
+    replacements = {
+        "等拉回": "等便宜買",
+        "續抱": "繼續看好",
+        "續抱觀察": "先觀察",
+        "續追蹤": "先觀察",
+        "可分批": "可分批買",
+        "分批落袋": "漲多先等",
+        "開高不追": "太熱別追",
+        "只觀察不追": "太熱別追",
+        "減碼觀察": "風險偏高先等",
+        "觀察": "先觀察",
+    }
+    return replacements.get(text, text)
 
 
 def no_chase_reason(
@@ -313,19 +342,18 @@ def candidate_card(
     midlong_action_label: Callable[[pd.Series], str],
     watch_price_plan_text: Callable[[pd.Series, str], str],
 ) -> str:
-    action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
+    action = display_action_label(short_term_action_label(row) if watch_type == "short" else midlong_action_label(row))
     period_label = "5日" if watch_type == "short" else "20日"
     period_value = row["ret5_pct"] if watch_type == "short" else row["ret20_pct"]
-    volume = _compact_number(row.get("volume_ratio20", 0))
     vol_text = volatility_badge_text(row)
     risk = str(row.get("spec_risk_label", "") or "")
     risk_part = f"｜{risk}" if risk and risk != "正常" else ""
     price_plan = watch_price_plan_text(row, watch_type)
-    price_line = f"\n   買點：{price_plan}" if price_plan else ""
+    price_line = f"\n   價格：{price_plan}" if price_plan else ""
     return (
         f"{format_ticker_name(row)}｜{action}\n"
-        f"   {period_label} {period_value}%｜量比 {volume}｜{vol_text}{risk_part}\n"
-        f"   型態：{row['regime']}"
+        f"   {period_label} {period_value}%｜{vol_text}{risk_part}\n"
+        f"   走勢：{plain_regime_text(row.get('regime'))}｜{volume_heat_text(row)}"
         f"{price_line}"
     )
 
@@ -338,15 +366,30 @@ def candidate_line(
     midlong_action_label: Callable[[pd.Series], str],
     watch_price_plan_text: Callable[[pd.Series, str], str],
 ) -> str:
-    action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
+    action = display_action_label(short_term_action_label(row) if watch_type == "short" else midlong_action_label(row))
     period_label = "5日" if watch_type == "short" else "20日"
     period_value = row["ret5_pct"] if watch_type == "short" else row["ret20_pct"]
     vol_text = volatility_badge_text(row)
     return (
         f"{format_ticker_name(row)}｜{action}\n"
-        f"  {period_label} {period_value}% / 量比 {row['volume_ratio20']}｜{vol_text}｜{row['regime']}\n"
-        f"  {watch_price_plan_text(row, watch_type)}"
+        f"  {period_label} {period_value}%｜{vol_text}\n"
+        f"  走勢：{plain_regime_text(row.get('regime'))}｜{volume_heat_text(row)}\n"
+        f"  價格：{watch_price_plan_text(row, watch_type)}"
     )
+
+
+def plain_regime_text(value: object) -> str:
+    text = str(value or "").strip()
+    replacements = {
+        "中段延續中": "還在漲",
+        "有點過熱，別硬追": "太熱別追",
+        "轉強速度有出來": "正在轉強",
+        "重新站上來了": "重新轉強",
+        "題材正在發酵": "題材變熱",
+        "低檔慢慢墊高": "低檔墊高",
+        "高檔拉回整理": "拉回整理",
+    }
+    return replacements.get(text, text)
 
 
 def special_etf_summary(etf_candidates: pd.DataFrame) -> list[str]:

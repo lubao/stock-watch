@@ -436,7 +436,7 @@ def compute_reco_warnings(
         low_vol = df[pd.to_numeric(df.get("volume_ratio20"), errors="coerce") < heuristics.warn_low_volume_ratio]
         if not low_vol.empty:
             names = ", ".join(low_vol["ticker"].astype(str).head(5).tolist())
-            warnings.append(f"{label} 含量比偏低標的（< {heuristics.warn_low_volume_ratio}）：{names}")
+            warnings.append(f"{label} 含量能偏低標的（< {heuristics.warn_low_volume_ratio}x）：{names}")
 
     def _scan_speculative(df: pd.DataFrame, label: str) -> None:
         if df.empty:

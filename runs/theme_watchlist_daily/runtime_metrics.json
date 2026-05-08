@@ -1,35 +1,35 @@
 {
-  "generated_at": "2026-05-08 08:12:11",
+  "generated_at": "2026-05-07 20:37:10",
   "status": "ok",
   "step_timings": {
-    "market_regime": 0.4202759389999997,
-    "us_market": 1.0513430609999972,
-    "cache_warmup": 30.634757109,
-    "watchlist": 0.39532446900000195,
-    "backtest": 0.40564151299999196,
-    "candidate_sets": 0.17421742300000176,
-    "reports": 0.4718924169999923,
-    "shadow_observation": 0.010376848999996469,
-    "alert_tracking": 0.07555502699999295,
-    "should_alert": 1.5790000134074944e-06,
-    "notifications": 14.005784225,
-    "persist_state": 0.00018109999999182946,
-    "persist_success": 0.000193825000010861
+    "market_regime": 0.005642290983814746,
+    "us_market": 0.01624687502044253,
+    "cache_warmup": 0.37262908299453557,
+    "watchlist": 0.17986587499035522,
+    "backtest": 13.47366345798946,
+    "candidate_sets": 0.06542529200669378,
+    "reports": 0.1813887500029523,
+    "shadow_observation": 0.0038413750007748604,
+    "alert_tracking": 0.028410375001840293,
+    "should_alert": 8.750066626816988e-07,
+    "notifications": 3.261497750005219,
+    "persist_state": 0.0003499999875202775,
+    "persist_success": 0.0006250420119613409
   },
   "warnings": [],
-  "total_seconds": 47.646,
-  "wall_seconds": 47.675,
+  "total_seconds": 17.59,
+  "wall_seconds": 17.603,
   "cache_stats": {
     "history_hit": 0,
-    "history_disk_hit": 0,
+    "history_disk_hit": 98,
     "history_superset_hit": 44,
-    "history_miss": 98,
+    "history_miss": 0,
     "indicator_hit": 93,
     "indicator_superset_hit": 93,
     "indicator_miss": 98
   },
   "backtest_meta": {
-    "signature": "b8abb815cc170cd2",
+    "signature": "20cc948a19168f77",
     "backtest_period": "5y",
     "lookahead_days": [
       1,
@@ -71,9 +71,9 @@
       "2891.TW": "2026-04-08",
       "2892.TW": "2026-04-08",
       "8064.TWO": "2026-04-08",
-      "0050.TW": "2026-04-07",
-      "00878.TW": "2026-04-07",
-      "0052.TW": "2026-04-07",
+      "0050.TW": "2026-04-08",
+      "00878.TW": "2026-04-08",
+      "0052.TW": "2026-04-08",
       "3014.TW": "2026-04-08",
       "3491.TWO": "2026-04-08",
       "3661.TW": "2026-04-08",
@@ -131,7 +131,7 @@
       "3556.TWO": "2026-04-08",
       "6292.TWO": "2026-04-08"
     },
-    "last_run_mode": "incremental_noop",
-    "last_run_scanned_cutoffs": 0
+    "last_run_mode": "full_rebuild",
+    "last_run_scanned_cutoffs": 85309
   }
 }

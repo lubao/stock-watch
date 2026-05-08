@@ -6,6 +6,7 @@ from typing import Callable, Optional
 
 import pandas as pd
 
+from stock_watch.reports import messages
 from stock_watch.reports.common import dataframe_to_html
 
 
@@ -83,9 +84,9 @@ def build_daily_report_markdown(
     for _, row in df_rank.iterrows():
         lines.append(
             f"| {int(row['rank'])} | {row['grade']} | {row['name']} ({row['ticker']}) | "
-            f"{layer_label(row['layer'])} | {row['regime']} | "
+            f"{layer_label(row['layer'])} | {messages.plain_regime_text(row.get('regime'))} | "
             f"{row['ret5_pct']}% | {row['ret20_pct']}% | {row.get('volatility_tag', '')} ({row.get('atr_pct', '')}%) | {_spec_text(row)} | "
-            f"{row['signals']} / 量比 {row['volume_ratio20']} |"
+            f"{row['signals']} / {messages.volume_heat_text(row)} |"
         )
 
     spec_scores = pd.to_numeric(df_rank.get("spec_risk_score", pd.Series(index=df_rank.index, dtype=float)), errors="coerce").fillna(0)
@@ -101,7 +102,7 @@ def build_daily_report_markdown(
             lines.append(
                 f"- #{int(row['rank'])} {row['name']} {row['ticker']} | 投機分數 {int(row.get('spec_risk_score', 0))} | "
                 f"{row['spec_risk_label']} / {str(row.get('spec_risk_subtype', '') or '一般投機型')} | {_spec_note(row)} | "
-                f"5D {row['ret5_pct']}% / 20D {row['ret20_pct']}% / 量比 {row['volume_ratio20']}"
+                f"5D {row['ret5_pct']}% / 20D {row['ret20_pct']}% / {messages.volume_heat_text(row)}"
             )
 
     short_candidates, short_backups, midlong_candidates, midlong_backups = build_candidate_sets(

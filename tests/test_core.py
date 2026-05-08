@@ -567,7 +567,7 @@ class MarketRegimeTests(unittest.TestCase):
         self.assertTrue(regime["is_bullish"])
         self.assertFalse(regime["volume_ratio20_valid"])
         self.assertEqual(regime["volume_ratio20"], 1.0)
-        self.assertIn("量比資料異常", regime["comment"])
+        self.assertIn("量能資料異常", regime["comment"])
 
     def test_build_market_scenario_uses_intraday_guard_before_close(self) -> None:
         market_regime = {
@@ -1071,6 +1071,9 @@ class TelegramChatIdTests(unittest.TestCase):
     def test_parse_chat_ids_supports_commas_and_newlines(self) -> None:
         self.assertEqual(parse_chat_ids("123,-1001\n-1002"), [123, -1001, -1002])
 
+    def test_parse_chat_ids_deduplicates_recipients(self) -> None:
+        self.assertEqual(parse_chat_ids("123,123\n-1001 123 -1001"), [123, -1001])
+
     def test_load_telegram_chat_ids_prefers_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             chat_ids_path = Path(tmpdir) / "chat_ids"
@@ -1088,6 +1091,20 @@ class TelegramChatIdTests(unittest.TestCase):
     def test_load_telegram_simple_chat_ids_reads_env_only(self) -> None:
         with patch.dict("os.environ", {"TELEGRAM_SIMPLE_CHAT_IDS": "555,666\n-1007"}, clear=False):
             self.assertEqual(load_telegram_simple_chat_ids(), [555, 666, -1007])
+
+    def test_send_telegram_message_deduplicates_recipients(self) -> None:
+        class Response:
+            ok = True
+            status_code = 200
+            text = "ok"
+
+        with patch("daily_theme_watchlist.TELEGRAM_TOKEN", "token"), patch(
+            "daily_theme_watchlist.TELEGRAM_HTTP.post", return_value=Response()
+        ) as post_mock:
+            dtw.send_telegram_message("hello", chat_ids=[123, 123, -1001, 123, -1001])
+
+        self.assertEqual(post_mock.call_count, 2)
+        self.assertEqual([call.kwargs["json"]["chat_id"] for call in post_mock.call_args_list], [123, -1001])
 
     def test_sanitize_telegram_error_redacts_bot_token(self) -> None:
         error = "Max retries exceeded with url: /bot123:secret/sendMessage"
@@ -1181,9 +1198,8 @@ class ChatIdMapUpdateTests(unittest.TestCase):
         self.assertIn("進攻持股", message)
         self.assertIn("🔥活潑", message)
         self.assertIn("報酬", message)
-        self.assertIn("加碼≤", message)
-        self.assertIn("賣出≥", message)
-        self.assertIn("跌破逃跑", message)
+        self.assertIn("賣≥", message)
+        self.assertIn("逃", message)
 
     def test_portfolio_report_is_separate_from_daily_report(self) -> None:
         df = pd.DataFrame(
@@ -1227,7 +1243,7 @@ class ChatIdMapUpdateTests(unittest.TestCase):
         self.assertIn("核心持股", portfolio_report)
         self.assertIn("台積電", portfolio_report)
         self.assertIn("價格帶", portfolio_report)
-        self.assertIn("跌破逃跑", portfolio_report)
+        self.assertIn("逃", portfolio_report)
 
     def test_portfolio_advice_promotes_low_risk_accel_holding(self) -> None:
         row = pd.Series(
@@ -1285,13 +1301,14 @@ class ChatIdMapUpdateTests(unittest.TestCase):
             }
         )
         plan = watch_price_plan(row, "short")
-        text = watch_price_plan_text(row, "short")
+        with patch("daily_theme_watchlist.PORTFOLIO", pd.DataFrame()):
+            text = watch_price_plan_text(row, "short")
 
         self.assertGreater(plan["trim_price"], plan["add_price"])
         self.assertGreater(plan["add_price"], plan["stop_price"])
-        self.assertIn("加碼參考", text)
-        self.assertIn("減碼參考", text)
-        self.assertIn("失效", text)
+        self.assertIn("買", text)
+        self.assertIn("賣", text)
+        self.assertIn("逃", text)
 
     def test_watch_price_plan_changes_by_holding_style(self) -> None:
         attack = pd.Series(
@@ -1342,6 +1359,36 @@ class ChatIdMapUpdateTests(unittest.TestCase):
         self.assertLessEqual(core_plan["add_price"], defensive_plan["add_price"])
         self.assertLessEqual(attack_plan["trim_price"], core_plan["trim_price"])
         self.assertLessEqual(defensive_plan["trim_price"], core_plan["trim_price"])
+
+    def test_watch_price_plan_uses_portfolio_context_for_holdings(self) -> None:
+        row = pd.Series(
+            {
+                "ticker": "2356.TW",
+                "name": "英業達",
+                "group": "theme",
+                "layer": "short_attack",
+                "close": 49.95,
+                "ma20": 46.32,
+                "ma60": 44.22,
+                "ret5_pct": 7.88,
+                "ret20_pct": 17.12,
+                "risk_score": 1,
+                "signals": "TREND",
+                "atr_pct": 3.48,
+                "volume_ratio20": 1.53,
+            }
+        )
+
+        with patch(
+            "daily_theme_watchlist.PORTFOLIO",
+            pd.DataFrame([{"ticker": "2356.TW", "shares": 1000, "avg_cost": 42.0, "target_profit_pct": 15.0}]),
+        ):
+            text = watch_price_plan_text(row, "short")
+
+        self.assertIn("持股：", text)
+        self.assertIn("賣≥", text)
+        self.assertIn("逃", text)
+        self.assertNotIn("買 ", text)
 
     def test_watch_price_plan_uses_atr_to_widen_add_and_stop(self) -> None:
         low_vol = pd.Series(
@@ -1426,9 +1473,9 @@ class ChatIdMapUpdateTests(unittest.TestCase):
         self.assertGreaterEqual(plan["add_price"], plan["escape_price"])
         self.assertGreaterEqual(plan["sell_price"], row["current_close"])
         self.assertGreaterEqual(plan["escape_price"], row["avg_cost"])
-        self.assertIn("加碼≤", text)
-        self.assertIn("賣出≥", text)
-        self.assertIn("跌破逃跑", text)
+        self.assertNotIn("買≤", text)
+        self.assertIn("賣≥", text)
+        self.assertIn("逃", text)
 
 
 class SelectPushCandidatesTests(unittest.TestCase):
@@ -1699,7 +1746,8 @@ class PushMessageTests(unittest.TestCase):
             ]
         )
 
-        message = build_macro_message(market_regime, us_market, df_rank)
+        with patch.object(dtw, "AUTO_ADDED_TICKERS", ["英業達 (2356.TW)"]):
+            message = build_macro_message(market_regime, us_market, df_rank)
 
         self.assertIn("大盤 / 美股摘要", message)
         self.assertIn("今日盤勢", message)
@@ -1711,6 +1759,8 @@ class PushMessageTests(unittest.TestCase):
         self.assertIn("操作重點", message)
         self.assertIn("出場提醒", message)
         self.assertIn("Heat Bias", message)
+        self.assertNotIn("持股同步加入觀察清單", message)
+        self.assertNotIn("英業達", message)
         self.assertNotIn("觸發來源", message)
         self.assertIn("台灣時間", message)
 
@@ -1812,17 +1862,21 @@ class PushMessageTests(unittest.TestCase):
         short_message = build_short_term_message(df, market_regime, us_market)
         midlong_message = build_midlong_message(df, market_regime, us_market)
 
-        self.assertIn("短線可買", short_message)
+        self.assertIn("短線可小買", short_message)
         self.assertIn("今天短線策略", short_message)
         self.assertNotIn("美股昨晚偏強", short_message)
         self.assertNotIn("觸發來源", short_message)
         self.assertIn("5日 9.0%", short_message)
+        self.assertIn("走勢：正在轉強｜量能：比平常熱 1.6 倍", short_message)
+        self.assertIn("走勢：還在漲｜量能：接近平常 1.1 倍", short_message)
+        self.assertNotIn("量比", short_message)
+        self.assertNotIn("中段延續中", short_message)
         self.assertIn("🔥活潑", short_message)
         self.assertNotIn("1. Short Name", short_message)
-        self.assertIn("加碼參考", short_message)
-        self.assertIn("減碼參考", short_message)
-        self.assertIn("失效", short_message)
-        self.assertTrue(any(label in short_message for label in ["等拉回", "開高不追", "續抱觀察", "分批落袋"]))
+        self.assertIn("買", short_message)
+        self.assertIn("賣", short_message)
+        self.assertIn("逃", short_message)
+        self.assertTrue(any(label in short_message for label in ["等便宜買", "太熱別追", "先觀察", "漲多先等"]))
 
         self.assertIn("中長線可布局", midlong_message)
         self.assertIn("今天中長線策略", midlong_message)
@@ -1831,8 +1885,8 @@ class PushMessageTests(unittest.TestCase):
         self.assertIn("20日 14.0%", midlong_message)
         self.assertIn("🧊穩健", midlong_message)
         self.assertNotIn("2. Mid Name", midlong_message)
-        self.assertIn("加碼參考", midlong_message)
-        self.assertTrue(any(label in midlong_message for label in ["續抱", "可分批", "觀察", "分批落袋"]))
+        self.assertIn("買", midlong_message)
+        self.assertTrue(any(label in midlong_message for label in ["繼續看好", "可分批買", "先觀察", "漲多先等"]))
 
     def test_macro_message_includes_new_watchlist_spotlight(self) -> None:
         market_regime = {"comment": "加權指數目前偏多", "ret20_pct": 14.0, "volume_ratio20": 1.2, "is_bullish": True}
@@ -2434,7 +2488,7 @@ class PushMessageTests(unittest.TestCase):
         us_market = {"summary": "美股昨晚偏強，台股開盤情緒通常較正面。"}
         message = build_early_gem_message(df, market_regime, us_market)
 
-        self.assertIn("早期轉強觀察", message)
+        self.assertIn("剛轉強觀察", message)
         self.assertNotIn("觸發來源", message)
         self.assertIn("GEM1.TW", message)
         self.assertNotIn("1. Gem One", message)
@@ -2677,10 +2731,11 @@ class PushMessageTests(unittest.TestCase):
         simple_calls = send_mock.call_args_list[4:]
         self.assertTrue(all(call.kwargs.get("chat_ids") == [775] for call in simple_calls))
         simple_messages = [call.args[0] for call in simple_calls]
-        self.assertIn("今日盤勢精簡版", simple_messages[0])
-        self.assertIn("短線精簡版", simple_messages[1])
-        self.assertIn("早期轉強精簡版", simple_messages[2])
-        self.assertIn("中長線精簡版", simple_messages[3])
+        self.assertIn("今日盤勢", simple_messages[0])
+        self.assertIn("短線可小買", simple_messages[1])
+        self.assertIn("剛轉強", simple_messages[2])
+        self.assertIn("中長線可布局", simple_messages[3])
+        self.assertTrue(all("精簡版" not in msg for msg in simple_messages))
         self.assertTrue(all("ETF / 債券觀察" not in msg for msg in simple_messages))
 
 

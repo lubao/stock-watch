@@ -57,6 +57,15 @@ def _build_simple_macro_message(daily_theme_watchlist, market_regime: dict, us_m
 
 
 def _build_short_term_message(daily_theme_watchlist, df_rank, market_regime: dict, us_market: dict):
+    def _watch_price_plan_text(row, watch_type: str) -> str:
+        return daily_theme_watchlist.watch_price_plan_text(
+            row,
+            watch_type,
+            market_regime=market_regime,
+            us_market=us_market,
+            df_rank=df_rank,
+        )
+
     return telegram_reports.build_short_term_message(
         df_rank,
         market_regime,
@@ -66,11 +75,20 @@ def _build_short_term_message(daily_theme_watchlist, df_rank, market_regime: dic
         effective_short_top_n=daily_theme_watchlist.effective_short_top_n,
         short_term_action_label=daily_theme_watchlist.short_term_action_label,
         midlong_action_label=daily_theme_watchlist.midlong_action_label,
-        watch_price_plan_text=daily_theme_watchlist.watch_price_plan_text,
+        watch_price_plan_text=_watch_price_plan_text,
     )
 
 
 def _build_simple_short_term_message(daily_theme_watchlist, df_rank, market_regime: dict, us_market: dict):
+    def _watch_price_plan_text(row, watch_type: str) -> str:
+        return daily_theme_watchlist.watch_price_plan_text(
+            row,
+            watch_type,
+            market_regime=market_regime,
+            us_market=us_market,
+            df_rank=df_rank,
+        )
+
     return telegram_reports.build_simple_short_term_message(
         df_rank,
         market_regime,
@@ -80,7 +98,7 @@ def _build_simple_short_term_message(daily_theme_watchlist, df_rank, market_regi
         effective_short_top_n=daily_theme_watchlist.effective_short_top_n,
         short_term_action_label=daily_theme_watchlist.short_term_action_label,
         midlong_action_label=daily_theme_watchlist.midlong_action_label,
-        watch_price_plan_text=daily_theme_watchlist.watch_price_plan_text,
+        watch_price_plan_text=_watch_price_plan_text,
     )
 
 
@@ -102,6 +120,15 @@ def _build_simple_early_gem_message(daily_theme_watchlist, df_rank):
 
 
 def _build_midlong_message(daily_theme_watchlist, df_rank, market_regime: dict, us_market: dict):
+    def _watch_price_plan_text(row, watch_type: str) -> str:
+        return daily_theme_watchlist.watch_price_plan_text(
+            row,
+            watch_type,
+            market_regime=market_regime,
+            us_market=us_market,
+            df_rank=df_rank,
+        )
+
     return telegram_reports.build_midlong_message(
         df_rank,
         market_regime,
@@ -111,11 +138,20 @@ def _build_midlong_message(daily_theme_watchlist, df_rank, market_regime: dict, 
         effective_midlong_top_n=daily_theme_watchlist.effective_midlong_top_n,
         short_term_action_label=daily_theme_watchlist.short_term_action_label,
         midlong_action_label=daily_theme_watchlist.midlong_action_label,
-        watch_price_plan_text=daily_theme_watchlist.watch_price_plan_text,
+        watch_price_plan_text=_watch_price_plan_text,
     )
 
 
 def _build_simple_midlong_message(daily_theme_watchlist, df_rank, market_regime: dict, us_market: dict):
+    def _watch_price_plan_text(row, watch_type: str) -> str:
+        return daily_theme_watchlist.watch_price_plan_text(
+            row,
+            watch_type,
+            market_regime=market_regime,
+            us_market=us_market,
+            df_rank=df_rank,
+        )
+
     return telegram_reports.build_simple_midlong_message(
         df_rank,
         market_regime,
@@ -125,7 +161,7 @@ def _build_simple_midlong_message(daily_theme_watchlist, df_rank, market_regime:
         effective_midlong_top_n=daily_theme_watchlist.effective_midlong_top_n,
         short_term_action_label=daily_theme_watchlist.short_term_action_label,
         midlong_action_label=daily_theme_watchlist.midlong_action_label,
-        watch_price_plan_text=daily_theme_watchlist.watch_price_plan_text,
+        watch_price_plan_text=_watch_price_plan_text,
     )
 
 

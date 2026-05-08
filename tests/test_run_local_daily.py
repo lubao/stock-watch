@@ -19,6 +19,7 @@ from stock_watch.cli.local_daily import default_local_telegram_chat_ids
 from stock_watch.cli.local_daily import main
 from stock_watch.cli.local_daily import parse_local_telegram_chat_ids
 from stock_watch.cli.local_daily import parse_args
+from stock_watch.cli.local_daily import send_quality_value_notification
 from stock_watch.cli.local_daily import should_run_step
 from stock_watch.cli.local_daily import update_quality_value_tracking
 from stock_watch.cli.local_daily import write_quality_value_new_additions_tracking
@@ -58,6 +59,9 @@ class RunLocalDailyTests(unittest.TestCase):
     def test_parse_local_telegram_chat_ids_supports_commas_and_newlines(self) -> None:
         self.assertEqual(parse_local_telegram_chat_ids("7758949915,123\n-1001"), [7758949915, 123, -1001])
 
+    def test_parse_local_telegram_chat_ids_deduplicates_recipients(self) -> None:
+        self.assertEqual(parse_local_telegram_chat_ids("7758949915,123,7758949915\n123"), [7758949915, 123])
+
     def test_configure_local_telegram_chat_ids_overrides_daily_module(self) -> None:
         class FakeDailyModule:
             TELEGRAM_CHAT_IDS = [111, 222]
@@ -81,10 +85,14 @@ class RunLocalDailyTests(unittest.TestCase):
         )
 
         self.assertIn("📌 今日動作摘要", message)
-        self.assertIn("🟢 可試單：(小部位研究單，先驗證不重壓)\n• 捷波 (6161.TWO)", message)
-        self.assertIn("🆕 新A追蹤：(新進A級，先觀察角色與買點)\n• 茂訊 (3213.TWO) 可試單", message)
-        self.assertIn("🧪 試單追蹤：(已列試單，檢查轉強或失效)\n• 茂訊 (3213.TWO) active_trial/risk_watch 第一筆 1/3 可研究", message)
-        self.assertIn("💼 持股落袋：(持股達收成條件，考慮分批)\n• 英業達 (2356)", message)
+        self.assertIn("🟢 今天可小買：(小買試水溫，不重壓)\n• 捷波 (6161.TWO)", message)
+        self.assertIn("🆕 新加入觀察：(剛進名單，先看能不能買)\n• 茂訊 (3213.TWO) 可小買", message)
+        self.assertIn("🧪 買後檢查：(已列試單，檢查變強或逃)\n• 茂訊 (3213.TWO) 試買中、風險偏高，買更小 第一筆可小買", message)
+        self.assertNotIn("active_trial", message)
+        self.assertNotIn("risk_watch", message)
+        self.assertNotIn("1/3", message)
+        self.assertNotIn("英業達", message)
+        self.assertNotIn("持股", message)
         self.assertNotIn("6161.TWO 捷波, 3515.TW 華擎", message)
 
     def test_build_simple_action_summary_notification_keeps_only_actionable_sections(self) -> None:
@@ -106,15 +114,36 @@ class RunLocalDailyTests(unittest.TestCase):
         )
 
         self.assertIn("📌 今日可行動名單", message)
-        self.assertIn("🟢 今天可小買：(小部位研究單，先驗證不重壓)\n• 捷波 (6161.TWO)｜買區 42.92–44｜停損 40.85", message)
-        self.assertIn("• 富鼎 (8261.TW)｜買區 120.72–128｜停損 110.21", message)
+        self.assertIn("🟢 今天可小買：(小買試水溫，不重壓)\n• 捷波 (6161.TWO)｜買 42.92–44｜逃 40.85", message)
+        self.assertIn("• 富鼎 (8261.TW)｜買 120.72–128｜逃 110.21", message)
+        self.assertNotIn("可可買區", message)
         self.assertNotIn("茂訊 (3213.TWO)", message)
-        self.assertIn("🟡 想買但等便宜：(等價格回到買區，不追高)\n• 華擎 (3515.TW)｜買區 300–315｜停損 286", message)
-        self.assertIn("💼 持股落袋：(持股達收成條件，考慮分批)\n• 英業達 (2356)", message)
+        self.assertIn("🟡 等便宜再買：(等回到買的位置，不追高)\n• 華擎 (3515.TW)｜等買 300–315｜逃 286", message)
+        self.assertNotIn("英業達", message)
+        self.assertNotIn("持股", message)
         self.assertNotIn("等轉強", message)
         self.assertNotIn("過熱先等", message)
-        self.assertNotIn("新A追蹤", message)
-        self.assertNotIn("試單追蹤", message)
+        self.assertNotIn("新加入觀察", message)
+        self.assertNotIn("買後檢查", message)
+
+    def test_quality_value_notification_does_not_send_portfolio_only_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            portfolio_report = root / "portfolio_report.md"
+            portfolio_report.write_text(
+                "- 英業達 (2356) | 進攻持股 | 建議 分批落袋 | 價格帶 賣≥49.95 / 逃 46.45\n",
+                encoding="utf-8",
+            )
+
+            with patch("daily_theme_watchlist.send_telegram_message") as send_mock:
+                send_quality_value_notification(
+                    entry_plan_csv=root / "missing_entry_plan.csv",
+                    portfolio_report_md=portfolio_report,
+                    new_additions_tracking_csv=root / "missing_new_additions.csv",
+                    trial_ledger_csv=root / "missing_trial_ledger.csv",
+                )
+
+        send_mock.assert_not_called()
 
     def test_should_run_step_uses_mode_defaults_and_skip_overrides(self) -> None:
         preopen_args = parse_args(["--mode", "preopen"])
@@ -190,7 +219,7 @@ class RunLocalDailyTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (theme_outdir / "portfolio_report.md").write_text(
-                "- 英業達 (2356) | 進攻持股 | 建議 分批落袋 | 價格帶 加碼≤47.95\n",
+                "- 英業達 (2356) | 進攻持股 | 建議 分批落袋 | 價格帶 買≤47.95\n",
                 encoding="utf-8",
             )
             pd.DataFrame(
@@ -230,10 +259,10 @@ class RunLocalDailyTests(unittest.TestCase):
         self.assertEqual(metrics["spec_risk_watch_rows"], 1)
         self.assertEqual(metrics["spec_risk_top_tickers"], ["3057.TW", "6669.TW"])
         self.assertEqual(metrics["watchlist_artifact_freshness_status"], "current")
-        self.assertEqual(metrics["action_trial_tickers"], ["捷波 (6161.TWO)｜買區 42.92–44｜停損 40.85"])
-        self.assertEqual(metrics["action_pullback_tickers"], ["譜瑞-KY (4966.TWO)｜買區 453–468.5｜停損 431"])
-        self.assertEqual(metrics["action_wait_strength_tickers"], ["神基 (3005.TW)｜買區 121.5–126｜停損 115"])
-        self.assertEqual(metrics["action_cooldown_tickers"], ["捷敏-KY (6525.TW)｜買區 101–105｜停損 96"])
+        self.assertEqual(metrics["action_trial_tickers"], ["捷波 (6161.TWO)｜買 42.92–44｜逃 40.85"])
+        self.assertEqual(metrics["action_pullback_tickers"], ["譜瑞-KY (4966.TWO)｜等買 453–468.5｜逃 431"])
+        self.assertEqual(metrics["action_wait_strength_tickers"], ["神基 (3005.TW)｜等強再買 121.5–126｜逃 115"])
+        self.assertEqual(metrics["action_cooldown_tickers"], ["捷敏-KY (6525.TW)｜別追，等 101–105｜逃 96"])
         self.assertEqual(metrics["portfolio_trim_tickers"], ["英業達 (2356)"])
 
     def test_update_quality_value_tracking_writes_lifecycle_and_review_outputs(self) -> None:

@@ -140,10 +140,15 @@ _CACHE_STATS = {
 def parse_chat_ids(raw: str) -> list[int]:
     tokens = re.split(r"[\s,]+", str(raw or "").strip())
     chat_ids: list[int] = []
+    seen: set[int] = set()
     for token in tokens:
         if not token:
             continue
-        chat_ids.append(int(token))
+        chat_id = int(token)
+        if chat_id in seen:
+            continue
+        seen.add(chat_id)
+        chat_ids.append(chat_id)
     return chat_ids
 
 
@@ -1186,8 +1191,8 @@ def get_market_regime() -> dict:
             f"{'偏多' if is_bullish else '偏保守'}，"
             f"收在 {round(close_,2)}，"
             f"20日漲幅 {round(ret20*100,2)}%，"
-            f"量比 {round(vol_ratio,2)}。"
-            + (" 量比資料異常，這輪先按中性處理。" if not vol_ratio_valid else "")
+            f"量能 {round(vol_ratio,2)}x。"
+            + (" 量能資料異常，這輪先按中性處理。" if not vol_ratio_valid else "")
         ),
     }
 
@@ -1898,15 +1903,67 @@ def watch_price_plan(row: pd.Series, watch_type: str) -> dict[str, float | str]:
     }
 
 
-def watch_price_plan_text(row: pd.Series, watch_type: str) -> str:
+def watch_price_plan_text(
+    row: pd.Series,
+    watch_type: str,
+    market_regime: Optional[dict] = None,
+    us_market: Optional[dict] = None,
+    df_rank: Optional[pd.DataFrame] = None,
+) -> str:
+    held_plan = held_portfolio_price_plan_text(row, market_regime=market_regime, us_market=us_market, df_rank=df_rank)
+    if held_plan:
+        return held_plan
     plan = watch_price_plan(row, watch_type)
     if not plan["add_price"]:
         return ""
     return (
-        f"加碼參考 {plan['add_price']} / "
-        f"減碼參考 {plan['trim_price']} / "
-        f"失效 {plan['stop_price']}"
+        f"買 {plan['add_price']} / "
+        f"賣 {plan['trim_price']} / "
+        f"逃 {plan['stop_price']}"
     )
+
+
+def held_portfolio_price_plan_text(
+    row: pd.Series,
+    *,
+    market_regime: Optional[dict] = None,
+    us_market: Optional[dict] = None,
+    df_rank: Optional[pd.DataFrame] = None,
+) -> str:
+    if PORTFOLIO.empty:
+        return ""
+    ticker = str(row.get("ticker", "") or "").strip()
+    if not ticker:
+        return ""
+    holdings = PORTFOLIO[PORTFOLIO["ticker"].astype(str) == ticker]
+    if holdings.empty:
+        return ""
+
+    held_row = holdings.iloc[0].copy()
+    review_row = row.copy()
+    for column in ["shares", "avg_cost", "target_profit_pct"]:
+        review_row[column] = held_row.get(column)
+    review_row["current_close"] = row.get("close")
+    if pd.isna(review_row.get("current_close")):
+        return ""
+
+    avg_cost = _portfolio_plan_float(review_row, "avg_cost")
+    current_close = _portfolio_plan_float(review_row, "current_close")
+    if avg_cost <= 0 or current_close <= 0:
+        return ""
+    review_row["unrealized_pnl_pct"] = round((current_close / avg_cost - 1.0) * 100, 2)
+    review_row["holding_style"] = str(review_row.get("holding_style", "") or holding_style_label(review_row))
+
+    market_scenario = None
+    if market_regime is not None and us_market is not None:
+        market_scenario = build_market_scenario(market_regime, us_market, df_rank)
+    review_row["advice"] = portfolio_advice_label(review_row, market_scenario)
+    plan = portfolio_price_plan(review_row, market_scenario)
+    sell_price = _portfolio_plan_float(pd.Series(plan), "sell_price")
+    escape_price = _portfolio_plan_float(pd.Series(plan), "escape_price")
+    if not sell_price or not escape_price:
+        return ""
+    return f"持股：{review_row['advice']}｜賣≥{sell_price:.2f} / 逃 {escape_price:.2f}"
 
 
 def build_special_etf_summary(etf_candidates: pd.DataFrame) -> list[str]:
@@ -1958,6 +2015,9 @@ def should_alert(
 
 
 def build_short_term_message(df_rank: pd.DataFrame, market_regime: dict, us_market: dict) -> str:
+    def _watch_price_plan_text(row: pd.Series, watch_type: str) -> str:
+        return watch_price_plan_text(row, watch_type, market_regime=market_regime, us_market=us_market, df_rank=df_rank)
+
     return telegram_reports.build_short_term_message(
         df_rank,
         market_regime,
@@ -1967,11 +2027,14 @@ def build_short_term_message(df_rank: pd.DataFrame, market_regime: dict, us_mark
         effective_short_top_n=effective_short_top_n,
         short_term_action_label=short_term_action_label,
         midlong_action_label=midlong_action_label,
-        watch_price_plan_text=watch_price_plan_text,
+        watch_price_plan_text=_watch_price_plan_text,
     )
 
 
 def build_midlong_message(df_rank: pd.DataFrame, market_regime: dict, us_market: dict) -> str:
+    def _watch_price_plan_text(row: pd.Series, watch_type: str) -> str:
+        return watch_price_plan_text(row, watch_type, market_regime=market_regime, us_market=us_market, df_rank=df_rank)
+
     return telegram_reports.build_midlong_message(
         df_rank,
         market_regime,
@@ -1981,7 +2044,7 @@ def build_midlong_message(df_rank: pd.DataFrame, market_regime: dict, us_market:
         effective_midlong_top_n=effective_midlong_top_n,
         short_term_action_label=short_term_action_label,
         midlong_action_label=midlong_action_label,
-        watch_price_plan_text=watch_price_plan_text,
+        watch_price_plan_text=_watch_price_plan_text,
     )
 
 
@@ -2195,7 +2258,7 @@ def portfolio_price_plan(row: pd.Series, market_scenario: Optional[dict] = None)
         note_bits.append("續抱時用賣出價分批停利，不用一次出清。")
     else:
         note_bits.append("先用價格帶管理，不追價。")
-    note_bits.append("跌破逃跑價代表型態失效，先退出或至少降部位。")
+    note_bits.append("跌破逃價代表型態失效，先退出或至少降部位。")
 
     return {
         "add_price": round(float(base_plan.get("add_price", 0.0) or 0.0), 2),
@@ -2211,7 +2274,11 @@ def portfolio_price_plan_text(row: pd.Series) -> str:
     escape_price = _portfolio_plan_float(row, "escape_price")
     if not add_price or not sell_price or not escape_price:
         return ""
-    return f"加碼≤{add_price:.2f} / 賣出≥{sell_price:.2f} / 跌破逃跑 {escape_price:.2f}"
+    advice = str(row.get("advice", "") or "")
+    sell_first_labels = ("落袋", "降部位", "收一點", "達標可落袋")
+    if any(label in advice for label in sell_first_labels):
+        return f"賣≥{sell_price:.2f} / 逃 {escape_price:.2f}"
+    return f"買≤{add_price:.2f} / 賣≥{sell_price:.2f} / 逃 {escape_price:.2f}"
 
 
 def build_portfolio_review_df(
@@ -2393,6 +2460,15 @@ def build_daily_report_markdown(
     bt_attack: Optional[pd.DataFrame],
     us_market: Optional[dict] = None,
 ) -> str:
+    def _watch_price_plan_text(row: pd.Series, watch_type: str) -> str:
+        return watch_price_plan_text(
+            row,
+            watch_type,
+            market_regime=market_regime,
+            us_market=us_market,
+            df_rank=df_rank,
+        )
+
     return build_daily_report_markdown_impl(
         df_rank,
         market_regime,
@@ -2403,7 +2479,7 @@ def build_daily_report_markdown(
         layer_label=layer_label,
         build_candidate_sets=build_candidate_sets,
         build_feedback_summary=build_feedback_summary,
-        watch_price_plan_text=watch_price_plan_text,
+        watch_price_plan_text=_watch_price_plan_text,
         select_special_etf_candidates=select_special_etf_candidates,
         build_special_etf_summary=build_special_etf_summary,
         special_etf_action_label=special_etf_action_label,
@@ -2445,6 +2521,15 @@ def save_reports(
     bt_attack: Optional[pd.DataFrame],
     us_market: Optional[dict] = None,
 ) -> None:
+    def _watch_price_plan_text(row: pd.Series, watch_type: str) -> str:
+        return watch_price_plan_text(
+            row,
+            watch_type,
+            market_regime=market_regime,
+            us_market=us_market,
+            df_rank=df_rank,
+        )
+
     save_reports_impl(
         df_rank,
         market_regime,
@@ -2457,7 +2542,7 @@ def save_reports(
         layer_label=layer_label,
         build_candidate_sets=build_candidate_sets,
         build_feedback_summary=build_feedback_summary,
-        watch_price_plan_text=watch_price_plan_text,
+        watch_price_plan_text=_watch_price_plan_text,
         select_special_etf_candidates=select_special_etf_candidates,
         build_special_etf_summary=build_special_etf_summary,
         special_etf_action_label=special_etf_action_label,
@@ -2527,7 +2612,7 @@ def split_message(text: str, limit: int) -> List[str]:
 
 
 def send_telegram_message(message: str, *, chat_ids: list[int] | None = None) -> None:
-    recipients = TELEGRAM_CHAT_IDS if chat_ids is None else chat_ids
+    recipients = list(dict.fromkeys(TELEGRAM_CHAT_IDS if chat_ids is None else chat_ids))
     if not TELEGRAM_TOKEN or not recipients:
         logger.warning("Telegram not configured. Skip notification.")
         return

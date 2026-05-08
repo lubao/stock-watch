@@ -293,7 +293,8 @@ class QualityValueReportTests(unittest.TestCase):
 
         self.assertIn("🟢 聯詠(3034.TW)", message)
         self.assertIn("🔴 技嘉(2376.TW)", message)
-        self.assertIn("買區 426.14–439.50", message)
+        self.assertIn("買 426.14–439.50", message)
+        self.assertIn("別追，等 275.20–285.80", message)
 
     def test_scout_watchlist_draft_keeps_only_a_b_priority(self) -> None:
         scout = pd.DataFrame(

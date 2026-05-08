@@ -116,12 +116,12 @@ def adjust_strategy_by_scenario(base_strat: StrategyT, scenario: dict) -> Strate
 def strategy_preview_lines(base_strat, scenario: dict) -> list[str]:
     adjusted = adjust_strategy_by_scenario(base_strat, scenario)
     field_labels = {
-        "rebreak_vol_ratio": "rebreak 量比",
+        "rebreak_vol_ratio": "rebreak 量能",
         "trend_ret20": "trend 20D",
         "accel_ret5": "accel 5D",
         "accel_ret10": "accel 10D",
-        "accel_vol_ratio_fast": "accel 快速量比",
-        "accel_vol_ratio_slow": "accel 緩速量比",
+        "accel_vol_ratio_fast": "accel 快速量能",
+        "accel_vol_ratio_slow": "accel 緩速量能",
     }
     changed: list[str] = []
     for field, label in field_labels.items():

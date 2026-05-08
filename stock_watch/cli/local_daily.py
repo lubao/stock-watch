@@ -134,10 +134,15 @@ def default_local_telegram_chat_ids() -> str:
 def parse_local_telegram_chat_ids(raw: str | None) -> list[int]:
     tokens = re.split(r"[\s,]+", str(raw or "").strip())
     chat_ids: list[int] = []
+    seen: set[int] = set()
     for token in tokens:
         if not token:
             continue
-        chat_ids.append(int(token))
+        chat_id = int(token)
+        if chat_id in seen:
+            continue
+        seen.add(chat_id)
+        chat_ids.append(chat_id)
     return chat_ids
 
 
@@ -214,7 +219,6 @@ def send_quality_value_notification(
         return
     metrics = {
         **_collect_quality_value_action_summary(entry_plan_csv),
-        **_collect_portfolio_action_summary(portfolio_report_md),
         **_collect_new_additions_action_summary(new_additions_tracking_csv),
         **_collect_trial_ledger_action_summary(trial_ledger_csv),
     }
@@ -236,19 +240,18 @@ def send_quality_value_notification(
 
 
 def build_simple_action_summary_notification(metrics: dict[str, object]) -> str:
-    def _section(label: str, key: str) -> list[str]:
+    def _section(label: str, key: str, *, price_label: str = "買") -> list[str]:
         values = metrics.get(key, [])
         if not isinstance(values, list):
             values = []
-        visible_values = [_format_action_summary_item(str(value)) for value in values[:3] if str(value).strip()]
+        visible_values = [_format_action_summary_item(str(value), price_label=price_label) for value in values[:3] if str(value).strip()]
         if not visible_values:
             return []
         return [label, *[f"• {value}" for value in visible_values]]
 
     sections = [
-        _section("🟢 今天可小買：(小部位研究單，先驗證不重壓)", "action_trial_tickers"),
-        _section("🟡 想買但等便宜：(等價格回到買區，不追高)", "action_pullback_tickers"),
-        _section("💼 持股落袋：(持股達收成條件，考慮分批)", "portfolio_trim_tickers"),
+        _section("🟢 今天可小買：(小買試水溫，不重壓)", "action_trial_tickers", price_label="買"),
+        _section("🟡 等便宜再買：(等回到買的位置，不追高)", "action_pullback_tickers", price_label="等買"),
     ]
     visible_sections: list[str] = []
     for section in sections:
@@ -258,28 +261,27 @@ def build_simple_action_summary_notification(metrics: dict[str, object]) -> str:
             visible_sections.append("")
         visible_sections.extend(section)
     if not visible_sections:
-        visible_sections = ["今天沒有新的可小買 / 等拉回 / 落袋動作。"]
+        visible_sections = ["今天沒有新的可小買 / 等便宜買動作。"]
     return "\n".join(["📌 今日可行動名單", "", *visible_sections])
 
 
 def build_action_summary_notification(metrics: dict[str, object]) -> str:
-    def _section(label: str, key: str) -> list[str]:
+    def _section(label: str, key: str, *, price_label: str = "買") -> list[str]:
         values = metrics.get(key, [])
         if not isinstance(values, list):
             values = []
-        visible_values = [_format_action_summary_item(str(value)) for value in values[:5] if str(value).strip()]
+        visible_values = [_format_action_summary_item(str(value), price_label=price_label) for value in values[:5] if str(value).strip()]
         if not visible_values:
             return []
         return [label, *[f"• {value}" for value in visible_values]]
 
     sections = [
-        _section("🟢 可試單：(小部位研究單，先驗證不重壓)", "action_trial_tickers"),
-        _section("🟡 等拉回：(等價格回到買區，不追高)", "action_pullback_tickers"),
-        _section("🔵 等轉強：(訊號還沒完整，等量價確認)", "action_wait_strength_tickers"),
-        _section("🔴 過熱先等：(漲幅或風險偏高，先等降溫)", "action_cooldown_tickers"),
-        _section("🆕 新A追蹤：(新進A級，先觀察角色與買點)", "new_addition_action_tickers"),
-        _section("🧪 試單追蹤：(已列試單，檢查轉強或失效)", "trial_ledger_action_tickers"),
-        _section("💼 持股落袋：(持股達收成條件，考慮分批)", "portfolio_trim_tickers"),
+        _section("🟢 今天可小買：(小買試水溫，不重壓)", "action_trial_tickers", price_label="買"),
+        _section("🟡 等便宜再買：(等回到買的位置，不追高)", "action_pullback_tickers", price_label="等買"),
+        _section("🔵 等變強再買：(訊號還沒完整，等量價確認)", "action_wait_strength_tickers", price_label="等強再買"),
+        _section("🔴 太熱別追：(漲幅或風險偏高，先等降溫)", "action_cooldown_tickers", price_label="別追，等"),
+        _section("🆕 新加入觀察：(剛進名單，先看能不能買)", "new_addition_action_tickers"),
+        _section("🧪 買後檢查：(已列試單，檢查變強或逃)", "trial_ledger_action_tickers"),
     ]
     visible_sections: list[str] = []
     for section in sections:
@@ -289,7 +291,7 @@ def build_action_summary_notification(metrics: dict[str, object]) -> str:
             visible_sections.append("")
         visible_sections.extend(section)
     if not visible_sections:
-        visible_sections = ["今天沒有新的試單 / 拉回 / 落袋動作。"]
+        visible_sections = ["今天沒有新的可小買 / 等便宜買動作。"]
     return "\n".join(["📌 今日動作摘要", "", *visible_sections])
 
 
@@ -679,7 +681,7 @@ def _collect_spec_risk_metrics(daily_rank_csv: Path) -> dict[str, object]:
     }
 
 
-def _format_ticker_names(df: pd.DataFrame, *, limit: int = 5) -> list[str]:
+def _format_ticker_names(df: pd.DataFrame, *, price_label: str = "買", limit: int = 5) -> list[str]:
     if df.empty:
         return []
     names: list[str] = []
@@ -688,7 +690,7 @@ def _format_ticker_names(df: pd.DataFrame, *, limit: int = 5) -> list[str]:
         name = str(row.get("name", "") or "").strip()
         if not ticker and not name:
             continue
-        names.append(_format_stock_price_display(row, ticker=ticker, name=name))
+        names.append(_format_stock_price_display(row, ticker=ticker, name=name, price_label=price_label))
     return names
 
 
@@ -722,7 +724,7 @@ def _price_range_text(row: pd.Series, *, low_key: str = "buy_zone_low", high_key
     return high or low
 
 
-def _format_stock_price_display(row: pd.Series, *, ticker: str, name: str) -> str:
+def _format_stock_price_display(row: pd.Series, *, ticker: str, name: str, price_label: str = "買") -> str:
     parts = [_format_stock_display(ticker, name)]
     current = _format_price(row.get("close"))
     zone = _price_range_text(row)
@@ -730,19 +732,60 @@ def _format_stock_price_display(row: pd.Series, *, ticker: str, name: str) -> st
     if current:
         parts.append(f"現價 {current}")
     if zone:
-        parts.append(f"買區 {zone}")
+        parts.append(f"{price_label} {zone}")
     if stop:
-        parts.append(f"停損 {stop}")
+        parts.append(f"逃 {stop}")
     return "｜".join(parts)
 
 
-def _format_action_summary_item(value: str) -> str:
+def _plain_action_summary_terms(text: str) -> str:
+    replacements = [
+        ("過熱先等", "太熱別追"),
+        ("分批落袋", "分批賣"),
+        ("可試單", "可小買"),
+        ("等拉回", "等便宜買"),
+        ("等轉強", "等變強再買"),
+        ("等待降溫", "太熱別追"),
+        ("移除試單", "逃"),
+        ("移除審核", "先拿掉"),
+        ("active_trial", "試買中"),
+        ("risk_watch", "風險偏高，買更小"),
+        ("holding_trial", "持續觀察"),
+        ("profit_watch", "快到收成區"),
+        ("add_watch", "第二筆可小買"),
+        ("risk_pause", "先暫停"),
+        ("invalidated", "逃"),
+        ("paused", "先暫停"),
+        ("waiting", "等條件"),
+        ("watch_wait", "等條件"),
+        ("第一筆 1/3 可研究", "第一筆可小買"),
+        ("第二筆 1/3", "第二筆可小買"),
+        ("停損", "逃"),
+        ("賣出≥", "賣≥"),
+        ("逃跑", "逃"),
+        ("失效", "逃"),
+    ]
+    plain = text
+    plain = re.sub(r"(?:可)?買區", "買", plain)
+    for old, new in replacements:
+        plain = plain.replace(old, new)
+    plain = plain.replace("/", "、")
+    return plain
+
+
+def _format_action_summary_item(value: str, *, price_label: str = "買") -> str:
     text = str(value or "").strip()
     match = re.match(r"^([0-9A-Z]{2,8}\.(?:TW|TWO))\s+([^｜\s]+)(.*)$", text)
     if not match:
-        return text
+        return _apply_action_price_label(_plain_action_summary_terms(text), price_label)
     ticker, name, rest = match.groups()
-    return f"{_format_stock_display(ticker, name)}{rest}".strip()
+    return _apply_action_price_label(_plain_action_summary_terms(f"{_format_stock_display(ticker, name)}{rest}".strip()), price_label)
+
+
+def _apply_action_price_label(text: str, price_label: str) -> str:
+    if price_label == "買":
+        return text
+    return re.sub(r"(?<=｜)買 (?=[0-9])", f"{price_label} ", text)
 
 
 def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, list[str]]:
@@ -767,10 +810,10 @@ def _collect_quality_value_action_summary(entry_plan_csv: Path) -> dict[str, lis
         work = work.sort_values(by=["_decision_priority"], ascending=[False])
     bias = work["entry_bias"].fillna("").astype(str).str.strip()
     return {
-        "action_trial_tickers": _format_ticker_names(work[bias.isin(["分批試單", "研究試單"])]),
-        "action_pullback_tickers": _format_ticker_names(work[bias == "等拉回"]),
-        "action_wait_strength_tickers": _format_ticker_names(work[bias == "等轉強"]),
-        "action_cooldown_tickers": _format_ticker_names(work[bias == "等待降溫"]),
+        "action_trial_tickers": _format_ticker_names(work[bias.isin(["分批試單", "研究試單"])], price_label="買"),
+        "action_pullback_tickers": _format_ticker_names(work[bias == "等拉回"], price_label="等買"),
+        "action_wait_strength_tickers": _format_ticker_names(work[bias == "等轉強"], price_label="等強再買"),
+        "action_cooldown_tickers": _format_ticker_names(work[bias == "等待降溫"], price_label="別追，等"),
     }
 
 
@@ -792,8 +835,10 @@ def _collect_portfolio_action_summary(portfolio_report_md: Path) -> dict[str, li
             sell = ""
             price_band = next((part for part in parts if part.startswith("價格帶 ")), "")
             sell_match = re.search(r"賣出≥([0-9.]+)", price_band)
+            if not sell_match:
+                sell_match = re.search(r"賣≥([0-9.]+)", price_band)
             if sell_match:
-                sell = f"賣出≥{_format_price(sell_match.group(1))}"
+                sell = f"賣≥{_format_price(sell_match.group(1))}"
             price_parts = [left]
             if current:
                 price_parts.append(current)
@@ -819,9 +864,17 @@ def _collect_new_additions_action_summary(new_additions_tracking_csv: Path) -> d
         name = str(row.get("name", "") or "").strip()
         action = str(row.get("next_action", "") or "").strip()
         if ticker:
-            parts = [_format_stock_price_display(row, ticker=ticker, name=name)]
+            plain_action = _plain_action_summary_terms(action)
+            price_label = "買"
+            if "等便宜買" in plain_action:
+                price_label = "等買"
+            elif "等變強再買" in plain_action:
+                price_label = "等強再買"
+            elif "太熱別追" in plain_action:
+                price_label = "別追，等"
+            parts = [_format_stock_price_display(row, ticker=ticker, name=name, price_label=price_label)]
             if action:
-                parts.append(action)
+                parts.append(plain_action)
             items.append("｜".join(parts))
     return {"new_addition_action_tickers": items}
 
@@ -845,6 +898,7 @@ def _collect_trial_ledger_action_summary(trial_ledger_csv: Path) -> dict[str, li
                 row.rename({"entry_zone_low": "buy_zone_low", "entry_zone_high": "buy_zone_high"}),
                 ticker=ticker,
                 name=name,
+                price_label="買",
             )]
             details = " ".join(part for part in [status_label, action] if part)
             if details:
