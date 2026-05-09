@@ -15,6 +15,7 @@ from stock_watch.cli import local_daily as local_daily_module
 from stock_watch.backtesting.core import run_backtest_dual as run_backtest_dual_module
 from stock_watch.ranking.scoring import build_rank_table
 from stock_watch.state import run_state
+from stock_watch.reports.portfolio import build_portfolio_risk_panel
 from stock_watch.signals.detect import (
     add_indicators as module_add_indicators,
     build_speculative_risk_profile as module_build_speculative_risk_profile,
@@ -1260,8 +1261,49 @@ class ChatIdMapUpdateTests(unittest.TestCase):
         self.assertIn("Market Scenario", portfolio_report)
         self.assertIn("核心持股", portfolio_report)
         self.assertIn("台積電", portfolio_report)
+        self.assertIn("Portfolio Risk Panel", portfolio_report)
+        self.assertIn("stop_distance_risk_pct", portfolio_report)
         self.assertIn("價格帶", portfolio_report)
         self.assertIn("逃", portfolio_report)
+
+    def test_build_portfolio_risk_panel_summarizes_exposure(self) -> None:
+        review = pd.DataFrame(
+            [
+                {
+                    "ticker": "2356.TW",
+                    "shares": 1000,
+                    "current_close": 50.0,
+                    "position_value": 50000.0,
+                    "escape_price": 45.0,
+                    "holding_style": "核心持股",
+                    "risk_score": 2,
+                    "spec_risk_score": 0,
+                    "spec_risk_label": "正常",
+                    "volatility_tag": "標準",
+                    "advice": "續抱但盯盤",
+                },
+                {
+                    "ticker": "3491.TWO",
+                    "shares": 100,
+                    "current_close": 1600.0,
+                    "position_value": 160000.0,
+                    "escape_price": 1400.0,
+                    "holding_style": "進攻持股",
+                    "risk_score": 6,
+                    "spec_risk_score": 7,
+                    "spec_risk_label": "疑似炒作風險高",
+                    "volatility_tag": "劇烈",
+                    "advice": "分批落袋",
+                },
+            ]
+        )
+
+        panel = build_portfolio_risk_panel(review)
+
+        self.assertEqual(int(panel.iloc[0]["total_positions"]), 2)
+        self.assertAlmostEqual(float(panel.iloc[0]["attack_exposure_pct"]), 76.2)
+        self.assertAlmostEqual(float(panel.iloc[0]["high_risk_exposure_pct"]), 76.2)
+        self.assertEqual(int(panel.iloc[0]["profit_take_positions"]), 1)
 
     def test_portfolio_advice_promotes_low_risk_accel_holding(self) -> None:
         row = pd.Series(

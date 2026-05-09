@@ -2310,7 +2310,8 @@ def build_portfolio_review_df(
 
     market_cols = [
         "ticker", "name", "close", "signals", "regime", "risk_score",
-        "ret5_pct", "ret20_pct", "volume_ratio20", "atr_pct", "volatility_tag", "ma20", "ma60"
+        "spec_risk_score", "spec_risk_label", "ret5_pct", "ret20_pct",
+        "volume_ratio20", "atr_pct", "volatility_tag", "ma20", "ma60"
     ]
     market_df = df_rank.reindex(columns=market_cols).copy() if not df_rank.empty else pd.DataFrame(columns=market_cols)
     review = portfolio.merge(market_df, on="ticker", how="left")
