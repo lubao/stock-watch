@@ -394,9 +394,9 @@ class RunWeeklyReviewTests(unittest.TestCase):
 
         qualities = set(table["pullback_quality"].astype(str))
         self.assertEqual(qualities, {"健康拉回", "弱承接/疑似破位", "高風險拉回"})
-        self.assertEqual(set(table["action_guide"].astype(str)), {"可等買點", "暫不買", "可小試"})
-        self.assertEqual(set(table["position_size"].astype(str)), {"0.5 倉", "0 倉", "0.25 倉"})
-        self.assertTrue(table["guidance"].astype(str).str.contains("停損|支撐|量價").all())
+        self.assertEqual(set(table["action_guide"].astype(str)), {"可等買點", "暫不買", "等轉強小試"})
+        self.assertEqual(set(table["position_size"].astype(str)), {"0.5 倉", "0 倉", "0 倉（轉強後 0.25 倉）"})
+        self.assertTrue(table["guidance"].astype(str).str.contains("小倉|支撐|量價").all())
         high_risk = table[table["pullback_quality"] == "高風險拉回"].iloc[0]
         self.assertEqual(high_risk["worst_ret"], -8.0)
 
@@ -420,14 +420,27 @@ class RunWeeklyReviewTests(unittest.TestCase):
             {**base, "signal_date": "2026-04-02", "ticker": "BBB.TW", "name": "Beta", "horizon_days": 5, "ret5_pct": 3.0, "ret20_pct": -1.0, "volume_ratio20": 0.7, "signals": "PULLBACK", "realized_ret_pct": -3.0},
             {**base, "signal_date": "2026-04-03", "ticker": "CCC.TW", "name": "Gamma", "horizon_days": 1, "ret5_pct": 11.0, "ret20_pct": 26.0, "market_heat": "hot", "realized_ret_pct": -2.5},
             {**base, "signal_date": "2026-04-03", "ticker": "CCC.TW", "name": "Gamma", "horizon_days": 5, "ret5_pct": 11.0, "ret20_pct": 26.0, "market_heat": "hot", "realized_ret_pct": -8.0},
+            {**base, "signal_date": "2026-04-04", "ticker": "DDD.TW", "name": "Delta", "horizon_days": 1, "ret5_pct": 16.0, "ret20_pct": 35.0, "market_heat": "hot", "realized_ret_pct": 1.2},
+            {**base, "signal_date": "2026-04-04", "ticker": "DDD.TW", "name": "Delta", "horizon_days": 5, "ret5_pct": 16.0, "ret20_pct": 35.0, "market_heat": "hot", "realized_ret_pct": 5.0},
+            {**base, "signal_date": "2026-04-05", "ticker": "EEE.TW", "name": "Echo", "horizon_days": 1, "ret5_pct": 16.0, "ret20_pct": 35.0, "market_heat": "hot", "realized_ret_pct": -0.5},
+            {**base, "signal_date": "2026-04-05", "ticker": "EEE.TW", "name": "Echo", "horizon_days": 5, "ret5_pct": 16.0, "ret20_pct": 35.0, "market_heat": "hot", "realized_ret_pct": -4.0},
         ]
 
         table = build_pullback_confirmation_diagnostics(pd.DataFrame(rows))
 
         confirmations = set(table["confirmation"].astype(str))
         self.assertEqual(confirmations, {"隔日轉強", "隔日小跌", "隔日失守"})
-        self.assertEqual(set(table["position_size"].astype(str)), {"0.5 倉", "0 倉"})
-        failed = table[table["confirmation"] == "隔日失守"].iloc[0]
+        high_risk_confirmed = table[
+            (table["pullback_quality"] == "高風險拉回") & (table["confirmation"] == "隔日轉強")
+        ].iloc[0]
+        high_risk_unconfirmed = table[
+            (table["pullback_quality"] == "高風險拉回") & (table["confirmation"] == "隔日小跌")
+        ].iloc[0]
+        self.assertEqual(high_risk_confirmed["action_guide"], "可小試")
+        self.assertEqual(high_risk_confirmed["position_size"], "0.25 倉")
+        self.assertEqual(high_risk_unconfirmed["action_guide"], "只觀察")
+        self.assertEqual(high_risk_unconfirmed["position_size"], "0 倉")
+        failed = table[(table["pullback_quality"] == "需確認拉回") & (table["confirmation"] == "隔日失守")].iloc[0]
         self.assertEqual(failed["worst_5d"], -8.0)
 
     def test_build_data_quality_gate_flags_clean_and_pending_rows(self) -> None:

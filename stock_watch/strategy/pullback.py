@@ -9,25 +9,29 @@ QUALITY_WEAK = "弱承接/疑似破位"
 QUALITY_CONFIRM = "需確認拉回"
 
 QUALITY_TO_ACTION = {
-    QUALITY_HIGH_RISK: "可小試",
+    QUALITY_HIGH_RISK: "等轉強小試",
     QUALITY_HEALTHY: "可等買點",
     QUALITY_WEAK: "暫不買",
     QUALITY_CONFIRM: "只觀察",
 }
 
 QUALITY_TO_GUIDANCE = {
-    QUALITY_HIGH_RISK: "強勢回檔試單：小倉、快停損、不攤平",
+    QUALITY_HIGH_RISK: "強勢回檔先觀察：隔日轉強才小倉試，不攤平",
     QUALITY_HEALTHY: "正常回檔候選：等支撐確認後再試",
     QUALITY_WEAK: "承接偏弱，先等：等量價恢復再看",
     QUALITY_CONFIRM: "訊號不乾淨，觀察：下一根確認再決定",
 }
 
 QUALITY_TO_POSITION_SIZE = {
-    QUALITY_HIGH_RISK: "0.25 倉",
+    QUALITY_HIGH_RISK: "0 倉（轉強後 0.25 倉）",
     QUALITY_HEALTHY: "0.5 倉",
     QUALITY_WEAK: "0 倉",
     QUALITY_CONFIRM: "0 倉",
 }
+
+CONFIRMED_HIGH_RISK_ACTION = "可小試"
+CONFIRMED_HIGH_RISK_GUIDANCE = "隔日轉強確認：小倉、快停損、不攤平"
+CONFIRMED_HIGH_RISK_POSITION_SIZE = "0.25 倉"
 
 
 def _numeric(value: object, default: float = 0.0) -> float:
@@ -81,6 +85,36 @@ def pullback_guidance_for_quality(quality: object) -> str:
 
 def pullback_position_for_quality(quality: object) -> str:
     return QUALITY_TO_POSITION_SIZE.get(str(quality or ""), "0 倉")
+
+
+def confirmed_pullback_action_for_quality(quality: object, confirmation: object) -> str:
+    quality_text = str(quality or "")
+    confirmation_text = str(confirmation or "")
+    if quality_text == QUALITY_HIGH_RISK and confirmation_text == "隔日轉強":
+        return CONFIRMED_HIGH_RISK_ACTION
+    if quality_text == QUALITY_HIGH_RISK:
+        return "只觀察"
+    return pullback_action_for_quality(quality_text)
+
+
+def confirmed_pullback_guidance_for_quality(quality: object, confirmation: object) -> str:
+    quality_text = str(quality or "")
+    confirmation_text = str(confirmation or "")
+    if quality_text == QUALITY_HIGH_RISK and confirmation_text == "隔日轉強":
+        return CONFIRMED_HIGH_RISK_GUIDANCE
+    if quality_text == QUALITY_HIGH_RISK:
+        return "未轉強前不試單，避免追高波動"
+    return pullback_guidance_for_quality(quality_text)
+
+
+def confirmed_pullback_position_for_quality(quality: object, confirmation: object) -> str:
+    quality_text = str(quality or "")
+    confirmation_text = str(confirmation or "")
+    if quality_text == QUALITY_HIGH_RISK and confirmation_text == "隔日轉強":
+        return CONFIRMED_HIGH_RISK_POSITION_SIZE
+    if quality_text == QUALITY_HIGH_RISK:
+        return "0 倉"
+    return pullback_position_for_quality(quality_text)
 
 
 def next_session_confirmation_bucket(realized_ret_pct: object) -> str:

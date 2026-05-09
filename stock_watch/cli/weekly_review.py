@@ -12,6 +12,9 @@ from stock_watch.paths import THEME_OUTDIR
 from stock_watch.paths import VERIFICATION_OUTDIR
 from stock_watch.runtime import ALERT_TRACK_CSV, LOCAL_TZ
 from stock_watch.strategy.pullback import classify_short_pullback_quality
+from stock_watch.strategy.pullback import confirmed_pullback_action_for_quality
+from stock_watch.strategy.pullback import confirmed_pullback_guidance_for_quality
+from stock_watch.strategy.pullback import confirmed_pullback_position_for_quality
 from stock_watch.strategy.pullback import next_session_confirmation_bucket
 from stock_watch.strategy.pullback import pullback_action_for_quality
 from stock_watch.strategy.pullback import pullback_guidance_for_quality
@@ -980,10 +983,22 @@ def build_pullback_confirmation_diagnostics(outcomes: pd.DataFrame) -> pd.DataFr
         return pd.DataFrame()
 
     paired["confirmation"] = paired["ret1_pct"].map(next_session_confirmation_bucket)
+    paired["action_guide"] = paired.apply(
+        lambda row: confirmed_pullback_action_for_quality(row["pullback_quality"], row["confirmation"]),
+        axis=1,
+    )
+    paired["guidance"] = paired.apply(
+        lambda row: confirmed_pullback_guidance_for_quality(row["pullback_quality"], row["confirmation"]),
+        axis=1,
+    )
+    paired["position_size"] = paired.apply(
+        lambda row: confirmed_pullback_position_for_quality(row["pullback_quality"], row["confirmation"]),
+        axis=1,
+    )
     paired["_win5"] = paired["ret5_realized_pct"] > 0
     name_col = "name" if "name" in paired.columns else "ticker"
     grouped = (
-        paired.groupby(["pullback_quality", "action_guide", "position_size", "confirmation"], dropna=False)
+        paired.groupby(["pullback_quality", "confirmation", "action_guide", "guidance", "position_size"], dropna=False)
         .agg(
             n=("ret5_realized_pct", "size"),
             win_rate_5d=("_win5", lambda series: round(float(series.mean()) * 100, 1) if len(series) else 0.0),
