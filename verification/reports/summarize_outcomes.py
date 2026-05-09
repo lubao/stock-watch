@@ -765,6 +765,10 @@ def summarize_atr_band_checkpoints(alert_tracking: pd.DataFrame) -> dict[str, pd
                 "path_n": int(len(path_matured)),
                 "touched_above_trim": 0,
                 "touched_below_stop": 0,
+                "avg_mfe_pct": None,
+                "avg_mae_pct": None,
+                "worst_mae_pct": None,
+                "best_mfe_pct": None,
                 "avg_ret_pct": round(float(matured[ret_col].mean()), 2),
             }
             if not path_matured.empty:
@@ -772,6 +776,10 @@ def summarize_atr_band_checkpoints(alert_tracking: pd.DataFrame) -> dict[str, pd
                 future_high = path_matured["alert_close"] * (1 + path_matured[high_col] / 100.0)
                 row["touched_above_trim"] = int((future_high >= path_matured["trim_price"]).sum())
                 row["touched_below_stop"] = int((future_low <= path_matured["stop_price"]).sum())
+                row["avg_mfe_pct"] = round(float(path_matured[high_col].mean()), 2)
+                row["avg_mae_pct"] = round(float(path_matured[low_col].mean()), 2)
+                row["worst_mae_pct"] = round(float(path_matured[low_col].min()), 2)
+                row["best_mfe_pct"] = round(float(path_matured[high_col].max()), 2)
             checkpoint_rows.append(row)
 
     band_coverage = pd.DataFrame(coverage_rows)

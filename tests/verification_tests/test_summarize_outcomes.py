@@ -701,6 +701,10 @@ class SummarizeOutcomesTests(unittest.TestCase):
         self.assertEqual(int(short_1d["path_n"]), 2)
         self.assertEqual(int(short_1d["touched_above_trim"]), 1)
         self.assertEqual(int(short_1d["touched_below_stop"]), 1)
+        self.assertAlmostEqual(float(short_1d["avg_mfe_pct"]), 5.0)
+        self.assertAlmostEqual(float(short_1d["avg_mae_pct"]), -6.0)
+        self.assertAlmostEqual(float(short_1d["worst_mae_pct"]), -10.0)
+        self.assertAlmostEqual(float(short_1d["best_mfe_pct"]), 9.0)
 
     def test_build_atr_band_findings_reports_insufficient_maturity(self) -> None:
         alert_tracking = pd.DataFrame(
