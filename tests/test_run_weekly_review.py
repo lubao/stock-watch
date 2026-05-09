@@ -18,6 +18,7 @@ from stock_watch.cli.weekly_review import build_rank_coverage_guidance
 from stock_watch.cli.weekly_review import build_rank_spec_risk_coverage
 from stock_watch.cli.weekly_review import build_research_diagnostics
 from stock_watch.cli.weekly_review import build_data_quality_gate
+from stock_watch.cli.weekly_review import build_pullback_quality_diagnostics
 from stock_watch.cli.weekly_review import build_spec_risk_overview
 from stock_watch.cli.weekly_review import build_weekly_review_payload
 from stock_watch.cli.weekly_review import filter_recent_signal_dates
@@ -336,6 +337,64 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertEqual(diagnostics["full_sensitivity"]["config_name"], "ret5_ge_median_9.4")
         self.assertEqual(diagnostics["full_tail"]["action"], "只觀察不追")
         self.assertTrue(diagnostics["notes"])
+
+    def test_build_pullback_quality_diagnostics_splits_short_pullbacks(self) -> None:
+        outcomes = pd.DataFrame(
+            [
+                {
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "action": "等拉回",
+                    "status": "ok",
+                    "risk_score": 2,
+                    "spec_risk_score": 0,
+                    "spec_risk_label": "正常",
+                    "ret5_pct": 6.0,
+                    "ret20_pct": 12.0,
+                    "volume_ratio20": 1.1,
+                    "signals": "TREND,ACCEL",
+                    "market_heat": "warm",
+                    "realized_ret_pct": 2.0,
+                },
+                {
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "action": "等拉回",
+                    "status": "ok",
+                    "risk_score": 2,
+                    "spec_risk_score": 0,
+                    "spec_risk_label": "正常",
+                    "ret5_pct": 3.0,
+                    "ret20_pct": -1.0,
+                    "volume_ratio20": 0.7,
+                    "signals": "PULLBACK",
+                    "market_heat": "normal",
+                    "realized_ret_pct": -4.0,
+                },
+                {
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "action": "等拉回",
+                    "status": "ok",
+                    "risk_score": 5,
+                    "spec_risk_score": 7,
+                    "spec_risk_label": "疑似炒作風險高",
+                    "ret5_pct": 18.0,
+                    "ret20_pct": 35.0,
+                    "volume_ratio20": 1.2,
+                    "signals": "TREND",
+                    "market_heat": "hot",
+                    "realized_ret_pct": -8.0,
+                },
+            ]
+        )
+
+        table = build_pullback_quality_diagnostics(outcomes)
+
+        qualities = set(table["pullback_quality"].astype(str))
+        self.assertEqual(qualities, {"健康拉回", "弱承接/疑似破位", "高風險拉回"})
+        high_risk = table[table["pullback_quality"] == "高風險拉回"].iloc[0]
+        self.assertEqual(high_risk["worst_ret"], -8.0)
 
     def test_build_data_quality_gate_flags_clean_and_pending_rows(self) -> None:
         snapshots = pd.DataFrame(
@@ -679,6 +738,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("## Recent Sensitivity Matrix", markdown)
         self.assertIn("## Full Sensitivity Matrix", markdown)
         self.assertIn("## Recent Tail Risk By Action", markdown)
+        self.assertIn("## Recent Short Pullback Quality", markdown)
+        self.assertTrue(payload["tables"]["recent_short_pullback_quality"])
         self.assertIn("## Full Tail Risk By Action", markdown)
         self.assertIn("## Current Rank Spec Risk By Group", markdown)
         self.assertIn("## Current Rank Spec Risk By Layer", markdown)

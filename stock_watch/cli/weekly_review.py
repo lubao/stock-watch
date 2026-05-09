@@ -882,6 +882,73 @@ def build_research_diagnostics(
     }
 
 
+def classify_short_pullback_quality(row: pd.Series) -> str:
+    if str(row.get("watch_type", "")) != "short" or str(row.get("action", "")) != "等拉回":
+        return ""
+
+    risk_score = pd.to_numeric(row.get("risk_score"), errors="coerce")
+    spec_score = pd.to_numeric(row.get("spec_risk_score"), errors="coerce")
+    ret5 = pd.to_numeric(row.get("ret5_pct"), errors="coerce")
+    ret20 = pd.to_numeric(row.get("ret20_pct"), errors="coerce")
+    volume_ratio = pd.to_numeric(row.get("volume_ratio20"), errors="coerce")
+    signals = {part.strip().upper() for part in str(row.get("signals", "")).split(",") if part.strip()}
+    spec_label = str(row.get("spec_risk_label", "") or "")
+    market_heat = str(row.get("market_heat", "") or "")
+
+    risk_value = float(risk_score) if not pd.isna(risk_score) else 0.0
+    spec_value = float(spec_score) if not pd.isna(spec_score) else 0.0
+    ret5_value = float(ret5) if not pd.isna(ret5) else 0.0
+    ret20_value = float(ret20) if not pd.isna(ret20) else 0.0
+    volume_value = float(volume_ratio) if not pd.isna(volume_ratio) else 1.0
+
+    if spec_label == "疑似炒作風險高" or spec_value >= 6 or risk_value >= 5 or ret5_value >= 15 or ret20_value >= 30:
+        return "高風險拉回"
+    if volume_value < 0.9 or ret20_value <= 0 or not (signals & {"TREND", "ACCEL", "REBREAK"}):
+        return "弱承接/疑似破位"
+    if risk_value <= 3 and ret5_value >= 4 and ret20_value > 0 and market_heat != "hot":
+        return "健康拉回"
+    return "需確認拉回"
+
+
+def build_pullback_quality_diagnostics(outcomes: pd.DataFrame) -> pd.DataFrame:
+    if outcomes.empty:
+        return pd.DataFrame()
+    required = {"watch_type", "action", "horizon_days", "realized_ret_pct", "status"}
+    if not required.issubset(set(outcomes.columns)):
+        return pd.DataFrame()
+
+    work = outcomes.copy()
+    work = work[
+        (work["status"].astype(str) == "ok")
+        & (work["watch_type"].astype(str) == "short")
+        & (work["action"].astype(str) == "等拉回")
+    ].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    work["pullback_quality"] = work.apply(classify_short_pullback_quality, axis=1)
+    work["_ret"] = pd.to_numeric(work["realized_ret_pct"], errors="coerce")
+    work = work.dropna(subset=["_ret"])
+    if work.empty:
+        return pd.DataFrame()
+    work["_win"] = work["_ret"] > 0
+    grouped = (
+        work.groupby(["horizon_days", "pullback_quality"], dropna=False)
+        .agg(
+            n=("_ret", "size"),
+            win_rate=("_win", lambda s: round(float(s.mean()) * 100, 1) if len(s) else 0.0),
+            avg_ret=("_ret", lambda s: round(float(s.mean()), 2)),
+            med_ret=("_ret", lambda s: round(float(s.median()), 2)),
+            tail25_ret=("_ret", lambda s: round(float(s.quantile(0.25)), 2)),
+            worst_ret=("_ret", lambda s: round(float(s.min()), 2)),
+            best_ret=("_ret", lambda s: round(float(s.max()), 2)),
+        )
+        .reset_index()
+        .sort_values(by=["horizon_days", "worst_ret", "n"], ascending=[True, True, False])
+    )
+    return grouped
+
+
 def build_data_quality_gate(outcomes: pd.DataFrame, snapshots: pd.DataFrame) -> dict[str, object]:
     summary: dict[str, object] = {
         "status": "ok",
@@ -1257,6 +1324,8 @@ def build_weekly_review_payload(
     short_gate_tuning_draft = build_short_gate_tuning_draft(full_parts, parts)
     research_diagnostics = build_research_diagnostics(parts, full_parts)
     data_quality_gate = build_data_quality_gate(outcomes, snapshots)
+    recent_pullback_quality = build_pullback_quality_diagnostics(recent_outcomes)
+    full_pullback_quality = build_pullback_quality_diagnostics(outcomes)
 
     overall_by_signal = parts.get("overall_by_signal", pd.DataFrame())
     weekly_checkpoint = parts.get("delta_ok_minus_below", pd.DataFrame())
@@ -1307,6 +1376,8 @@ def build_weekly_review_payload(
             "full_sensitivity_matrix": full_parts.get("sensitivity_matrix", pd.DataFrame()).to_dict(orient="records"),
             "recent_tail_risk_by_action": parts.get("tail_risk_by_action", pd.DataFrame()).to_dict(orient="records"),
             "full_tail_risk_by_action": full_parts.get("tail_risk_by_action", pd.DataFrame()).to_dict(orient="records"),
+            "recent_short_pullback_quality": recent_pullback_quality.to_dict(orient="records"),
+            "full_short_pullback_quality": full_pullback_quality.to_dict(orient="records"),
             "current_rank_spec_risk_by_group": rank_spec_coverage["by_group"],
             "current_rank_spec_risk_by_layer": rank_spec_coverage["by_layer"],
             "current_rank_spec_risk_by_source": candidate_source_summary["by_source"],
@@ -1473,6 +1544,8 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     lines.extend(["## Full Sensitivity Matrix", _table_markdown(pd.DataFrame(tables.get("full_sensitivity_matrix", []))).rstrip(), ""])
     lines.extend(["## Recent Tail Risk By Action", _table_markdown(pd.DataFrame(tables.get("recent_tail_risk_by_action", []))).rstrip(), ""])
     lines.extend(["## Full Tail Risk By Action", _table_markdown(pd.DataFrame(tables.get("full_tail_risk_by_action", [])).head(80)).rstrip(), ""])
+    lines.extend(["## Recent Short Pullback Quality", _table_markdown(pd.DataFrame(tables.get("recent_short_pullback_quality", []))).rstrip(), ""])
+    lines.extend(["## Full Short Pullback Quality", _table_markdown(pd.DataFrame(tables.get("full_short_pullback_quality", []))).rstrip(), ""])
     if isinstance(data_quality_gate, dict):
         lines.extend(["## Data Quality Coverage By Horizon", _table_markdown(pd.DataFrame(data_quality_gate.get("coverage_by_horizon", []))).rstrip(), ""])
         lines.extend(["## Data Quality Coverage By Signal Date", _table_markdown(pd.DataFrame(data_quality_gate.get("coverage_by_signal_date", []))).rstrip(), ""])
