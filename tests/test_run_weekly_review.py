@@ -20,6 +20,7 @@ from stock_watch.cli.weekly_review import build_research_diagnostics
 from stock_watch.cli.weekly_review import build_data_quality_gate
 from stock_watch.cli.weekly_review import build_pullback_confirmation_diagnostics
 from stock_watch.cli.weekly_review import build_pullback_quality_diagnostics
+from stock_watch.cli.weekly_review import build_pullback_rule_recommendations
 from stock_watch.cli.weekly_review import build_spec_risk_overview
 from stock_watch.cli.weekly_review import build_weekly_review_payload
 from stock_watch.cli.weekly_review import filter_recent_signal_dates
@@ -443,6 +444,37 @@ class RunWeeklyReviewTests(unittest.TestCase):
         failed = table[(table["pullback_quality"] == "需確認拉回") & (table["confirmation"] == "隔日失守")].iloc[0]
         self.assertEqual(failed["worst_5d"], -8.0)
 
+    def test_build_pullback_rule_recommendations_blocks_tail_risk_upgrades(self) -> None:
+        confirmation = pd.DataFrame(
+            [
+                {
+                    "pullback_quality": "高風險拉回",
+                    "confirmation": "隔日轉強",
+                    "n": 2,
+                    "win_rate_5d": 100.0,
+                    "avg_5d": 14.12,
+                    "worst_5d": 4.23,
+                },
+                {
+                    "pullback_quality": "需確認拉回",
+                    "confirmation": "隔日轉強",
+                    "n": 3,
+                    "win_rate_5d": 66.7,
+                    "avg_5d": 2.69,
+                    "worst_5d": -12.41,
+                },
+            ]
+        )
+
+        rules = build_pullback_rule_recommendations(confirmation)
+
+        high_risk = rules[(rules["rule"] == "高風險拉回") & (rules["condition"] == "隔日轉強")].iloc[0]
+        confirm_risk = rules[rules["rule"] == "需確認拉回"].iloc[0]
+        self.assertEqual(high_risk["status"], "active_low_sample")
+        self.assertEqual(high_risk["action_guide"], "可小試")
+        self.assertEqual(confirm_risk["status"], "block_upgrade")
+        self.assertEqual(confirm_risk["position_size"], "0 倉")
+
     def test_build_data_quality_gate_flags_clean_and_pending_rows(self) -> None:
         snapshots = pd.DataFrame(
             [
@@ -789,6 +821,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertTrue(payload["tables"]["recent_short_pullback_quality"])
         self.assertIn("## Full Short Pullback Confirmation", markdown)
         self.assertIn("full_short_pullback_confirmation", payload["tables"])
+        self.assertIn("## Short Pullback Rule Recommendations", markdown)
+        self.assertIn("short_pullback_rule_recommendations", payload["tables"])
         self.assertIn("## Full Tail Risk By Action", markdown)
         self.assertIn("## Current Rank Spec Risk By Group", markdown)
         self.assertIn("## Current Rank Spec Risk By Layer", markdown)

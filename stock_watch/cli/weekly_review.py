@@ -1014,6 +1014,86 @@ def build_pullback_confirmation_diagnostics(outcomes: pd.DataFrame) -> pd.DataFr
     return grouped
 
 
+def build_pullback_rule_recommendations(confirmation: pd.DataFrame) -> pd.DataFrame:
+    columns = ["rule", "condition", "status", "action_guide", "position_size", "evidence", "note"]
+    if confirmation.empty:
+        return pd.DataFrame(columns=columns)
+
+    work = confirmation.copy()
+    for col in ["n", "win_rate_5d", "avg_5d", "worst_5d"]:
+        if col in work.columns:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+
+    def _match(quality: str, confirmation_label: str | None = None) -> pd.DataFrame:
+        matched = work[work["pullback_quality"].astype(str) == quality].copy()
+        if confirmation_label is not None:
+            matched = matched[matched["confirmation"].astype(str) == confirmation_label].copy()
+        return matched
+
+    def _evidence(row: pd.Series | None) -> str:
+        if row is None:
+            return "n=0"
+        return (
+            f"n={int(row.get('n', 0))}, "
+            f"win5={row.get('win_rate_5d', 0.0)}%, "
+            f"avg5={row.get('avg_5d', 0.0)}%, "
+            f"worst5={row.get('worst_5d', 0.0)}%"
+        )
+
+    high_confirmed = _match("高風險拉回", "隔日轉強")
+    high_row = high_confirmed.iloc[0] if not high_confirmed.empty else None
+    high_n = int(high_row.get("n", 0)) if high_row is not None else 0
+    high_worst = float(high_row.get("worst_5d", 0.0)) if high_row is not None and pd.notna(high_row.get("worst_5d")) else -999.0
+    high_status = "active_low_sample" if high_n < 5 else "active"
+    if high_worst < 0:
+        high_status = "research_only"
+
+    confirm_pullback = _match("需確認拉回", "隔日轉強")
+    confirm_row = confirm_pullback.iloc[0] if not confirm_pullback.empty else None
+    confirm_worst = float(confirm_row.get("worst_5d", 0.0)) if confirm_row is not None and pd.notna(confirm_row.get("worst_5d")) else 0.0
+    confirm_status = "block_upgrade" if confirm_worst <= -8 else "review_required"
+
+    rows = [
+        {
+            "rule": "高風險拉回",
+            "condition": "隔日轉強",
+            "status": high_status,
+            "action_guide": "可小試",
+            "position_size": "0.25 倉",
+            "evidence": _evidence(high_row),
+            "note": "只允許確認後小倉，不提前試單；樣本不足時維持 low-sample 標記。",
+        },
+        {
+            "rule": "高風險拉回",
+            "condition": "未達隔日轉強",
+            "status": "blocked",
+            "action_guide": "只觀察",
+            "position_size": "0 倉",
+            "evidence": "rule-based",
+            "note": "未確認前不試單，避免追高波動與隔日失守。",
+        },
+        {
+            "rule": "需確認拉回",
+            "condition": "即使隔日轉強",
+            "status": confirm_status,
+            "action_guide": "只觀察",
+            "position_size": "0 倉",
+            "evidence": _evidence(confirm_row),
+            "note": "隔日轉強仍可能有大尾端風險，不能升級成買進訊號。",
+        },
+        {
+            "rule": "弱承接/疑似破位",
+            "condition": "任何隔日確認",
+            "status": "blocked",
+            "action_guide": "暫不買",
+            "position_size": "0 倉",
+            "evidence": _evidence(_match("弱承接/疑似破位").sort_values(by=["worst_5d"]).iloc[0] if not _match("弱承接/疑似破位").empty else None),
+            "note": "先等量價恢復，不因單日反彈直接升級。",
+        },
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
 def build_data_quality_gate(outcomes: pd.DataFrame, snapshots: pd.DataFrame) -> dict[str, object]:
     summary: dict[str, object] = {
         "status": "ok",
@@ -1393,6 +1473,7 @@ def build_weekly_review_payload(
     full_pullback_quality = build_pullback_quality_diagnostics(outcomes)
     recent_pullback_confirmation = build_pullback_confirmation_diagnostics(recent_outcomes)
     full_pullback_confirmation = build_pullback_confirmation_diagnostics(outcomes)
+    pullback_rule_recommendations = build_pullback_rule_recommendations(full_pullback_confirmation)
 
     overall_by_signal = parts.get("overall_by_signal", pd.DataFrame())
     weekly_checkpoint = parts.get("delta_ok_minus_below", pd.DataFrame())
@@ -1447,6 +1528,7 @@ def build_weekly_review_payload(
             "full_short_pullback_quality": full_pullback_quality.to_dict(orient="records"),
             "recent_short_pullback_confirmation": recent_pullback_confirmation.to_dict(orient="records"),
             "full_short_pullback_confirmation": full_pullback_confirmation.to_dict(orient="records"),
+            "short_pullback_rule_recommendations": pullback_rule_recommendations.to_dict(orient="records"),
             "current_rank_spec_risk_by_group": rank_spec_coverage["by_group"],
             "current_rank_spec_risk_by_layer": rank_spec_coverage["by_layer"],
             "current_rank_spec_risk_by_source": candidate_source_summary["by_source"],
@@ -1617,6 +1699,7 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     lines.extend(["## Full Short Pullback Quality", _table_markdown(pd.DataFrame(tables.get("full_short_pullback_quality", []))).rstrip(), ""])
     lines.extend(["## Recent Short Pullback Confirmation", _table_markdown(pd.DataFrame(tables.get("recent_short_pullback_confirmation", []))).rstrip(), ""])
     lines.extend(["## Full Short Pullback Confirmation", _table_markdown(pd.DataFrame(tables.get("full_short_pullback_confirmation", []))).rstrip(), ""])
+    lines.extend(["## Short Pullback Rule Recommendations", _table_markdown(pd.DataFrame(tables.get("short_pullback_rule_recommendations", []))).rstrip(), ""])
     if isinstance(data_quality_gate, dict):
         lines.extend(["## Data Quality Coverage By Horizon", _table_markdown(pd.DataFrame(data_quality_gate.get("coverage_by_horizon", []))).rstrip(), ""])
         lines.extend(["## Data Quality Coverage By Signal Date", _table_markdown(pd.DataFrame(data_quality_gate.get("coverage_by_signal_date", []))).rstrip(), ""])
