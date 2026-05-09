@@ -12,8 +12,10 @@ from stock_watch.paths import THEME_OUTDIR
 from stock_watch.paths import VERIFICATION_OUTDIR
 from stock_watch.runtime import ALERT_TRACK_CSV, LOCAL_TZ
 from stock_watch.strategy.pullback import classify_short_pullback_quality
+from stock_watch.strategy.pullback import next_session_confirmation_bucket
 from stock_watch.strategy.pullback import pullback_action_for_quality
 from stock_watch.strategy.pullback import pullback_guidance_for_quality
+from stock_watch.strategy.pullback import pullback_position_for_quality
 from verification.reports.summarize_outcomes import summarize_atr_band_checkpoints
 from verification.reports.summarize_outcomes import summarize_outcomes
 
@@ -923,6 +925,77 @@ def build_pullback_quality_diagnostics(outcomes: pd.DataFrame) -> pd.DataFrame:
     )
     grouped.insert(2, "action_guide", grouped["pullback_quality"].map(pullback_action_for_quality))
     grouped.insert(3, "guidance", grouped["pullback_quality"].map(pullback_guidance_for_quality))
+    grouped.insert(4, "position_size", grouped["pullback_quality"].map(pullback_position_for_quality))
+    return grouped
+
+
+def build_pullback_confirmation_diagnostics(outcomes: pd.DataFrame) -> pd.DataFrame:
+    if outcomes.empty:
+        return pd.DataFrame()
+    required = {"signal_date", "ticker", "watch_type", "action", "horizon_days", "realized_ret_pct", "status"}
+    if not required.issubset(set(outcomes.columns)):
+        return pd.DataFrame()
+
+    work = outcomes.copy()
+    work = work[
+        (work["status"].astype(str) == "ok")
+        & (work["watch_type"].astype(str) == "short")
+        & (work["action"].astype(str) == "等拉回")
+    ].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    work["_horizon"] = pd.to_numeric(work["horizon_days"], errors="coerce")
+    work["_ret"] = pd.to_numeric(work["realized_ret_pct"], errors="coerce")
+    work = work[work["_horizon"].isin([1, 5])].dropna(subset=["_ret"]).copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    keys = ["signal_date", "ticker"]
+    base = work.sort_values(by=keys + ["_horizon"]).drop_duplicates(subset=keys, keep="first").copy()
+    base["pullback_quality"] = base.apply(classify_short_pullback_quality, axis=1)
+    base["action_guide"] = base["pullback_quality"].map(pullback_action_for_quality)
+    base["position_size"] = base["pullback_quality"].map(pullback_position_for_quality)
+
+    ret1 = (
+        work[work["_horizon"] == 1]
+        .groupby(keys, dropna=False)["_ret"]
+        .first()
+        .rename("ret1_pct")
+        .reset_index()
+    )
+    ret5 = (
+        work[work["_horizon"] == 5]
+        .groupby(keys, dropna=False)["_ret"]
+        .first()
+        .rename("ret5_realized_pct")
+        .reset_index()
+    )
+    paired_columns = keys + ["pullback_quality", "action_guide", "position_size"]
+    if "name" in base.columns:
+        paired_columns.insert(2, "name")
+    paired = base[paired_columns]
+    paired = paired.merge(ret1, on=keys, how="inner").merge(ret5, on=keys, how="inner")
+    if paired.empty:
+        return pd.DataFrame()
+
+    paired["confirmation"] = paired["ret1_pct"].map(next_session_confirmation_bucket)
+    paired["_win5"] = paired["ret5_realized_pct"] > 0
+    name_col = "name" if "name" in paired.columns else "ticker"
+    grouped = (
+        paired.groupby(["pullback_quality", "action_guide", "position_size", "confirmation"], dropna=False)
+        .agg(
+            n=("ret5_realized_pct", "size"),
+            win_rate_5d=("_win5", lambda series: round(float(series.mean()) * 100, 1) if len(series) else 0.0),
+            avg_5d=("ret5_realized_pct", lambda series: round(float(series.mean()), 2)),
+            tail25_5d=("ret5_realized_pct", lambda series: round(float(series.quantile(0.25)), 2)),
+            worst_5d=("ret5_realized_pct", lambda series: round(float(series.min()), 2)),
+            best_5d=("ret5_realized_pct", lambda series: round(float(series.max()), 2)),
+            examples=(name_col, lambda series: "、".join(series.dropna().astype(str).head(3).tolist())),
+        )
+        .reset_index()
+        .sort_values(by=["worst_5d", "n"], ascending=[True, False])
+    )
     return grouped
 
 
@@ -1303,6 +1376,8 @@ def build_weekly_review_payload(
     data_quality_gate = build_data_quality_gate(outcomes, snapshots)
     recent_pullback_quality = build_pullback_quality_diagnostics(recent_outcomes)
     full_pullback_quality = build_pullback_quality_diagnostics(outcomes)
+    recent_pullback_confirmation = build_pullback_confirmation_diagnostics(recent_outcomes)
+    full_pullback_confirmation = build_pullback_confirmation_diagnostics(outcomes)
 
     overall_by_signal = parts.get("overall_by_signal", pd.DataFrame())
     weekly_checkpoint = parts.get("delta_ok_minus_below", pd.DataFrame())
@@ -1355,6 +1430,8 @@ def build_weekly_review_payload(
             "full_tail_risk_by_action": full_parts.get("tail_risk_by_action", pd.DataFrame()).to_dict(orient="records"),
             "recent_short_pullback_quality": recent_pullback_quality.to_dict(orient="records"),
             "full_short_pullback_quality": full_pullback_quality.to_dict(orient="records"),
+            "recent_short_pullback_confirmation": recent_pullback_confirmation.to_dict(orient="records"),
+            "full_short_pullback_confirmation": full_pullback_confirmation.to_dict(orient="records"),
             "current_rank_spec_risk_by_group": rank_spec_coverage["by_group"],
             "current_rank_spec_risk_by_layer": rank_spec_coverage["by_layer"],
             "current_rank_spec_risk_by_source": candidate_source_summary["by_source"],
@@ -1523,6 +1600,8 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     lines.extend(["## Full Tail Risk By Action", _table_markdown(pd.DataFrame(tables.get("full_tail_risk_by_action", [])).head(80)).rstrip(), ""])
     lines.extend(["## Recent Short Pullback Quality", _table_markdown(pd.DataFrame(tables.get("recent_short_pullback_quality", []))).rstrip(), ""])
     lines.extend(["## Full Short Pullback Quality", _table_markdown(pd.DataFrame(tables.get("full_short_pullback_quality", []))).rstrip(), ""])
+    lines.extend(["## Recent Short Pullback Confirmation", _table_markdown(pd.DataFrame(tables.get("recent_short_pullback_confirmation", []))).rstrip(), ""])
+    lines.extend(["## Full Short Pullback Confirmation", _table_markdown(pd.DataFrame(tables.get("full_short_pullback_confirmation", []))).rstrip(), ""])
     if isinstance(data_quality_gate, dict):
         lines.extend(["## Data Quality Coverage By Horizon", _table_markdown(pd.DataFrame(data_quality_gate.get("coverage_by_horizon", []))).rstrip(), ""])
         lines.extend(["## Data Quality Coverage By Signal Date", _table_markdown(pd.DataFrame(data_quality_gate.get("coverage_by_signal_date", []))).rstrip(), ""])

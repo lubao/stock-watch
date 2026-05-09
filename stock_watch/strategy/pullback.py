@@ -22,6 +22,13 @@ QUALITY_TO_GUIDANCE = {
     QUALITY_CONFIRM: "訊號不乾淨，觀察：下一根確認再決定",
 }
 
+QUALITY_TO_POSITION_SIZE = {
+    QUALITY_HIGH_RISK: "0.25 倉",
+    QUALITY_HEALTHY: "0.5 倉",
+    QUALITY_WEAK: "0 倉",
+    QUALITY_CONFIRM: "0 倉",
+}
+
 
 def _numeric(value: object, default: float = 0.0) -> float:
     parsed = pd.to_numeric(value, errors="coerce")
@@ -60,9 +67,28 @@ def pullback_guidance(row: pd.Series) -> str:
     return QUALITY_TO_GUIDANCE.get(classify_short_pullback_quality(row), QUALITY_TO_GUIDANCE[QUALITY_CONFIRM])
 
 
+def pullback_position_size(row: pd.Series) -> str:
+    return QUALITY_TO_POSITION_SIZE.get(classify_short_pullback_quality(row), "0 倉")
+
+
 def pullback_action_for_quality(quality: object) -> str:
     return QUALITY_TO_ACTION.get(str(quality or ""), "只觀察")
 
 
 def pullback_guidance_for_quality(quality: object) -> str:
     return QUALITY_TO_GUIDANCE.get(str(quality or ""), QUALITY_TO_GUIDANCE[QUALITY_CONFIRM])
+
+
+def pullback_position_for_quality(quality: object) -> str:
+    return QUALITY_TO_POSITION_SIZE.get(str(quality or ""), "0 倉")
+
+
+def next_session_confirmation_bucket(realized_ret_pct: object) -> str:
+    ret1_value = _numeric(realized_ret_pct)
+    if ret1_value >= 1.0:
+        return "隔日轉強"
+    if ret1_value >= 0.0:
+        return "隔日守住"
+    if ret1_value > -2.0:
+        return "隔日小跌"
+    return "隔日失守"

@@ -18,6 +18,7 @@ from stock_watch.cli.weekly_review import build_rank_coverage_guidance
 from stock_watch.cli.weekly_review import build_rank_spec_risk_coverage
 from stock_watch.cli.weekly_review import build_research_diagnostics
 from stock_watch.cli.weekly_review import build_data_quality_gate
+from stock_watch.cli.weekly_review import build_pullback_confirmation_diagnostics
 from stock_watch.cli.weekly_review import build_pullback_quality_diagnostics
 from stock_watch.cli.weekly_review import build_spec_risk_overview
 from stock_watch.cli.weekly_review import build_weekly_review_payload
@@ -394,9 +395,40 @@ class RunWeeklyReviewTests(unittest.TestCase):
         qualities = set(table["pullback_quality"].astype(str))
         self.assertEqual(qualities, {"健康拉回", "弱承接/疑似破位", "高風險拉回"})
         self.assertEqual(set(table["action_guide"].astype(str)), {"可等買點", "暫不買", "可小試"})
+        self.assertEqual(set(table["position_size"].astype(str)), {"0.5 倉", "0 倉", "0.25 倉"})
         self.assertTrue(table["guidance"].astype(str).str.contains("停損|支撐|量價").all())
         high_risk = table[table["pullback_quality"] == "高風險拉回"].iloc[0]
         self.assertEqual(high_risk["worst_ret"], -8.0)
+
+    def test_build_pullback_confirmation_diagnostics_pairs_1d_and_5d(self) -> None:
+        base = {
+            "watch_type": "short",
+            "action": "等拉回",
+            "status": "ok",
+            "risk_score": 2,
+            "spec_risk_score": 0,
+            "spec_risk_label": "正常",
+            "ret20_pct": 12.0,
+            "volume_ratio20": 1.2,
+            "signals": "TREND,ACCEL",
+            "market_heat": "warm",
+        }
+        rows = [
+            {**base, "signal_date": "2026-04-01", "ticker": "AAA.TW", "name": "Alpha", "horizon_days": 1, "ret5_pct": 6.0, "realized_ret_pct": 1.5},
+            {**base, "signal_date": "2026-04-01", "ticker": "AAA.TW", "name": "Alpha", "horizon_days": 5, "ret5_pct": 6.0, "realized_ret_pct": 4.0},
+            {**base, "signal_date": "2026-04-02", "ticker": "BBB.TW", "name": "Beta", "horizon_days": 1, "ret5_pct": 3.0, "ret20_pct": -1.0, "volume_ratio20": 0.7, "signals": "PULLBACK", "realized_ret_pct": -0.5},
+            {**base, "signal_date": "2026-04-02", "ticker": "BBB.TW", "name": "Beta", "horizon_days": 5, "ret5_pct": 3.0, "ret20_pct": -1.0, "volume_ratio20": 0.7, "signals": "PULLBACK", "realized_ret_pct": -3.0},
+            {**base, "signal_date": "2026-04-03", "ticker": "CCC.TW", "name": "Gamma", "horizon_days": 1, "ret5_pct": 11.0, "ret20_pct": 26.0, "market_heat": "hot", "realized_ret_pct": -2.5},
+            {**base, "signal_date": "2026-04-03", "ticker": "CCC.TW", "name": "Gamma", "horizon_days": 5, "ret5_pct": 11.0, "ret20_pct": 26.0, "market_heat": "hot", "realized_ret_pct": -8.0},
+        ]
+
+        table = build_pullback_confirmation_diagnostics(pd.DataFrame(rows))
+
+        confirmations = set(table["confirmation"].astype(str))
+        self.assertEqual(confirmations, {"隔日轉強", "隔日小跌", "隔日失守"})
+        self.assertEqual(set(table["position_size"].astype(str)), {"0.5 倉", "0 倉"})
+        failed = table[table["confirmation"] == "隔日失守"].iloc[0]
+        self.assertEqual(failed["worst_5d"], -8.0)
 
     def test_build_data_quality_gate_flags_clean_and_pending_rows(self) -> None:
         snapshots = pd.DataFrame(
@@ -742,6 +774,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("## Recent Tail Risk By Action", markdown)
         self.assertIn("## Recent Short Pullback Quality", markdown)
         self.assertTrue(payload["tables"]["recent_short_pullback_quality"])
+        self.assertIn("## Full Short Pullback Confirmation", markdown)
+        self.assertIn("full_short_pullback_confirmation", payload["tables"])
         self.assertIn("## Full Tail Risk By Action", markdown)
         self.assertIn("## Current Rank Spec Risk By Group", markdown)
         self.assertIn("## Current Rank Spec Risk By Layer", markdown)

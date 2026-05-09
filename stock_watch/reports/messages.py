@@ -357,7 +357,7 @@ def candidate_card(
     price_line = f"\n   價格：{price_plan}" if price_plan else ""
     pullback_line = ""
     if watch_type == "short" and str(raw_action) == "等拉回":
-        pullback_line = f"\n   操作：{pullback.pullback_guidance(row)}"
+        pullback_line = f"\n   操作：{pullback.pullback_guidance(row)}｜建議 {pullback.pullback_position_size(row)}"
     return (
         f"{format_ticker_name(row)}｜{action}\n"
         f"   {period_label} {period_value}%｜{vol_text}{risk_part}\n"
@@ -382,7 +382,7 @@ def candidate_line(
     vol_text = volatility_badge_text(row)
     pullback_line = ""
     if watch_type == "short" and str(raw_action) == "等拉回":
-        pullback_line = f"  操作：{pullback.pullback_guidance(row)}\n"
+        pullback_line = f"  操作：{pullback.pullback_guidance(row)}｜建議 {pullback.pullback_position_size(row)}\n"
     return (
         f"{format_ticker_name(row)}｜{action}\n"
         f"  {period_label} {period_value}%｜{vol_text}\n"
