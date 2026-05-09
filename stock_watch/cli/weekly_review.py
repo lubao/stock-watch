@@ -1594,6 +1594,8 @@ def build_weekly_review_payload(
             "full_short_gate_simulation": full_parts.get("short_gate_simulation", pd.DataFrame()).to_dict(orient="records"),
             "recent_factor_high_low_spread": parts.get("factor_high_low_spread", pd.DataFrame()).to_dict(orient="records"),
             "full_factor_high_low_spread": full_parts.get("factor_high_low_spread", pd.DataFrame()).to_dict(orient="records"),
+            "recent_factor_tear_sheet": parts.get("factor_tear_sheet", pd.DataFrame()).to_dict(orient="records"),
+            "full_factor_tear_sheet": full_parts.get("factor_tear_sheet", pd.DataFrame()).to_dict(orient="records"),
             "recent_sensitivity_matrix": parts.get("sensitivity_matrix", pd.DataFrame()).to_dict(orient="records"),
             "full_sensitivity_matrix": full_parts.get("sensitivity_matrix", pd.DataFrame()).to_dict(orient="records"),
             "recent_tail_risk_by_action": parts.get("tail_risk_by_action", pd.DataFrame()).to_dict(orient="records"),
@@ -1768,6 +1770,8 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     lines.extend(["## Full Short Gate Simulation", _table_markdown(pd.DataFrame(tables.get("full_short_gate_simulation", []))).rstrip(), ""])
     lines.extend(["## Recent Factor High-Low Spread", _table_markdown(pd.DataFrame(tables.get("recent_factor_high_low_spread", []))).rstrip(), ""])
     lines.extend(["## Full Factor High-Low Spread", _table_markdown(pd.DataFrame(tables.get("full_factor_high_low_spread", []))).rstrip(), ""])
+    lines.extend(["## Recent Factor Tear Sheet", _table_markdown(pd.DataFrame(tables.get("recent_factor_tear_sheet", [])).head(80)).rstrip(), ""])
+    lines.extend(["## Full Factor Tear Sheet", _table_markdown(pd.DataFrame(tables.get("full_factor_tear_sheet", [])).head(80)).rstrip(), ""])
     lines.extend(["## Recent Sensitivity Matrix", _table_markdown(pd.DataFrame(tables.get("recent_sensitivity_matrix", []))).rstrip(), ""])
     lines.extend(["## Full Sensitivity Matrix", _table_markdown(pd.DataFrame(tables.get("full_sensitivity_matrix", []))).rstrip(), ""])
     lines.extend(["## Recent Tail Risk By Action", _table_markdown(pd.DataFrame(tables.get("recent_tail_risk_by_action", []))).rstrip(), ""])

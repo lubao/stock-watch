@@ -87,6 +87,7 @@ def _empty_summary_parts() -> dict[str, pd.DataFrame]:
         "overall_by_spec_subtype": empty,
         "factor_quantile_analysis": empty,
         "factor_high_low_spread": empty,
+        "factor_tear_sheet": empty,
         "tail_risk_by_action": empty,
         "sensitivity_matrix": empty,
         "delta_ok_minus_below": empty,
@@ -216,10 +217,15 @@ def summarize_factor_quantiles(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     ]
     rows: list[pd.DataFrame] = []
     spread_rows: list[dict[str, object]] = []
+    tear_rows: list[dict[str, object]] = []
     labels = ["low", "mid", "high"]
     available = [col for col in factor_cols if col in df.columns]
     if df.empty or not available:
-        return {"factor_quantile_analysis": pd.DataFrame(), "factor_high_low_spread": pd.DataFrame()}
+        return {
+            "factor_quantile_analysis": pd.DataFrame(),
+            "factor_high_low_spread": pd.DataFrame(),
+            "factor_tear_sheet": pd.DataFrame(),
+        }
 
     base = df.copy()
     base["realized_ret_pct"] = pd.to_numeric(base.get("realized_ret_pct"), errors="coerce")
@@ -266,12 +272,41 @@ def summarize_factor_quantiles(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
             rows.append(summary)
 
             high = summary[summary["factor_bucket"] == "high"]
+            mid = summary[summary["factor_bucket"] == "mid"]
             low = summary[summary["factor_bucket"] == "low"]
             if high.empty or low.empty:
                 continue
             high_row = high.iloc[0]
             low_row = low.iloc[0]
+            mid_row = mid.iloc[0] if not mid.empty else None
             min_n = min(int(high_row["n"]), int(low_row["n"]))
+            low_avg = float(low_row["avg_ret"])
+            mid_avg = float(mid_row["avg_ret"]) if mid_row is not None else float("nan")
+            high_avg = float(high_row["avg_ret"])
+            signal_dates = int(work["signal_date"].dropna().astype(str).nunique()) if "signal_date" in work.columns else 0
+            dominant_signal_date_share = 0.0
+            if "signal_date" in work.columns and not work["signal_date"].dropna().empty:
+                dominant_signal_date_share = round(float(work["signal_date"].astype(str).value_counts(normalize=True).max() * 100.0), 1)
+            if pd.notna(mid_avg) and low_avg <= mid_avg <= high_avg:
+                monotonicity = "increasing"
+                direction = "higher_is_better"
+            elif pd.notna(mid_avg) and low_avg >= mid_avg >= high_avg:
+                monotonicity = "decreasing"
+                direction = "higher_is_worse"
+            else:
+                monotonicity = "mixed"
+                direction = "mixed"
+            delta_avg = round(high_avg - low_avg, 2)
+            if min_n < 10 or signal_dates < 5:
+                status = "need_more_samples"
+            elif dominant_signal_date_share > 50:
+                status = "date_concentrated"
+            elif monotonicity == "mixed":
+                status = "mixed_signal"
+            elif abs(delta_avg) < 1.0:
+                status = "weak_spread"
+            else:
+                status = "research_candidate"
             spread_rows.append(
                 {
                     "horizon_days": horizon_days,
@@ -284,6 +319,29 @@ def summarize_factor_quantiles(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
                     "delta_win_rate_high_minus_low": round(float(high_row["win_rate"]) - float(low_row["win_rate"]), 1),
                     "delta_avg_ret_high_minus_low": round(float(high_row["avg_ret"]) - float(low_row["avg_ret"]), 2),
                     "delta_med_ret_high_minus_low": round(float(high_row["med_ret"]) - float(low_row["med_ret"]), 2),
+                }
+            )
+            tear_rows.append(
+                {
+                    "horizon_days": horizon_days,
+                    "watch_type": watch_type,
+                    "factor_name": factor,
+                    "status": status,
+                    "direction": direction,
+                    "monotonicity": monotonicity,
+                    "signal_dates": signal_dates,
+                    "dominant_signal_date_share_pct": dominant_signal_date_share,
+                    "low_n": int(low_row["n"]),
+                    "mid_n": int(mid_row["n"]) if mid_row is not None else 0,
+                    "high_n": int(high_row["n"]),
+                    "min_edge_bucket_n": min_n,
+                    "low_avg_ret": low_avg,
+                    "mid_avg_ret": round(mid_avg, 2) if pd.notna(mid_avg) else None,
+                    "high_avg_ret": high_avg,
+                    "delta_avg_ret_high_minus_low": delta_avg,
+                    "low_worst_ret": float(low_row["worst_ret"]),
+                    "high_worst_ret": float(high_row["worst_ret"]),
+                    "delta_worst_ret_high_minus_low": round(float(high_row["worst_ret"]) - float(low_row["worst_ret"]), 2),
                 }
             )
 
@@ -303,7 +361,18 @@ def summarize_factor_quantiles(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
             ascending=[True, True, False, False],
         ).reset_index(drop=True)
 
-    return {"factor_quantile_analysis": factor_quantile, "factor_high_low_spread": factor_spread}
+    factor_tear_sheet = pd.DataFrame(tear_rows)
+    if not factor_tear_sheet.empty:
+        factor_tear_sheet = factor_tear_sheet.sort_values(
+            by=["status", "horizon_days", "watch_type", "min_edge_bucket_n", "delta_avg_ret_high_minus_low"],
+            ascending=[True, True, True, False, False],
+        ).reset_index(drop=True)
+
+    return {
+        "factor_quantile_analysis": factor_quantile,
+        "factor_high_low_spread": factor_spread,
+        "factor_tear_sheet": factor_tear_sheet,
+    }
 
 
 def summarize_tail_risk_by_action(df: pd.DataFrame) -> pd.DataFrame:
@@ -1163,6 +1232,7 @@ def summarize_outcomes(outcomes: pd.DataFrame) -> dict[str, pd.DataFrame]:
     factor_parts = summarize_factor_quantiles(df)
     factor_quantile_analysis = factor_parts["factor_quantile_analysis"]
     factor_high_low_spread = factor_parts["factor_high_low_spread"]
+    factor_tear_sheet = factor_parts["factor_tear_sheet"]
     tail_risk_by_action = summarize_tail_risk_by_action(df)
     sensitivity_matrix = summarize_sensitivity_matrix(df)
 
@@ -1801,6 +1871,7 @@ def summarize_outcomes(outcomes: pd.DataFrame) -> dict[str, pd.DataFrame]:
         "overall_by_spec_subtype": overall_by_spec_subtype,
         "factor_quantile_analysis": factor_quantile_analysis,
         "factor_high_low_spread": factor_high_low_spread,
+        "factor_tear_sheet": factor_tear_sheet,
         "tail_risk_by_action": tail_risk_by_action,
         "sensitivity_matrix": sensitivity_matrix,
         "delta_ok_minus_below": delta_ok_minus_below,
@@ -1947,6 +2018,8 @@ def build_summary_markdown(
         lines.extend(["## Overall By Spec Subtype (all dates)", _table_markdown(parts["overall_by_spec_subtype"]).rstrip(), ""])
     if not parts["factor_high_low_spread"].empty:
         lines.extend(["## Factor High-Low Spread (Alphalens-style)", _table_markdown(parts["factor_high_low_spread"]).rstrip(), ""])
+    if not parts["factor_tear_sheet"].empty:
+        lines.extend(["## Factor Tear Sheet (Alphalens-style)", _table_markdown(parts["factor_tear_sheet"]).rstrip(), ""])
     if not parts["factor_quantile_analysis"].empty:
         lines.extend(["## Factor Quantile Analysis (Alphalens-style, top 80)", _table_markdown(parts["factor_quantile_analysis"].head(80)).rstrip(), ""])
     if not parts["tail_risk_by_action"].empty:

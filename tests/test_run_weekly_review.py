@@ -853,6 +853,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("## Full Short Gate Promotion Watch", markdown)
         self.assertIn("## Recent Factor High-Low Spread", markdown)
         self.assertIn("## Full Factor High-Low Spread", markdown)
+        self.assertIn("## Recent Factor Tear Sheet", markdown)
+        self.assertIn("## Full Factor Tear Sheet", markdown)
         self.assertIn("## Recent Sensitivity Matrix", markdown)
         self.assertIn("## Full Sensitivity Matrix", markdown)
         self.assertIn("## Recent Tail Risk By Action", markdown)

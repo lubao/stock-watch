@@ -286,6 +286,8 @@ class SummarizeOutcomesTests(unittest.TestCase):
         self.assertFalse(parts["factor_quantile_analysis"].empty)
         self.assertIn("factor_high_low_spread", parts)
         self.assertFalse(parts["factor_high_low_spread"].empty)
+        self.assertIn("factor_tear_sheet", parts)
+        self.assertFalse(parts["factor_tear_sheet"].empty)
         self.assertIn("tail_risk_by_action", parts)
         self.assertFalse(parts["tail_risk_by_action"].empty)
         self.assertIn("sensitivity_matrix", parts)
@@ -321,6 +323,10 @@ class SummarizeOutcomesTests(unittest.TestCase):
         self.assertFalse(spread.empty)
         setup_spread = spread[spread["factor_name"] == "setup_score"].iloc[0]
         self.assertGreater(float(setup_spread["delta_avg_ret_high_minus_low"]), 0.0)
+        tear_sheet = parts["factor_tear_sheet"]
+        self.assertFalse(tear_sheet.empty)
+        self.assertIn("monotonicity", tear_sheet.columns)
+        self.assertIn("dominant_signal_date_share_pct", tear_sheet.columns)
 
         tail = parts["tail_risk_by_action"]
         self.assertFalse(tail.empty)
