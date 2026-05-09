@@ -10,6 +10,7 @@ import pandas as pd
 from stock_watch.cli.weekly_review import build_decisions
 from stock_watch.cli.weekly_review import build_atr_exit_verification
 from stock_watch.cli.weekly_review import build_atr_exit_policy_simulation
+from stock_watch.cli.weekly_review import build_atr_exit_policy_segment_simulation
 from stock_watch.cli.weekly_review import build_candidate_expansion_plan
 from stock_watch.cli.weekly_review import build_candidate_fill_directions
 from stock_watch.cli.weekly_review import build_candidate_source_plan
@@ -663,6 +664,50 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertEqual(int(trim_half["trim_exit_count"]), 3)
         self.assertIn(touched_stop["status"], {"research_candidate", "tail_hedge_costly"})
 
+    def test_build_atr_exit_policy_segment_simulation_splits_action_labels(self) -> None:
+        rows = []
+        for action_label in ["等拉回", "續抱"]:
+            for idx in range(10):
+                ret = 4.0
+                stop_day = 0
+                trim_day = 0
+                trim_before = 0
+                stop_before = 0
+                if action_label == "等拉回" and idx == 0:
+                    ret = -12.0
+                    stop_day = 1
+                    stop_before = 1
+                if action_label == "續抱" and idx in {0, 1, 2}:
+                    ret = 8.0
+                    trim_day = 2
+                    trim_before = 1
+                rows.append(
+                    {
+                        "watch_type": "short" if action_label == "等拉回" else "midlong",
+                        "action_label": action_label,
+                        "scenario_label": "高檔震盪盤",
+                        "alert_close": 100.0,
+                        "trim_price": 110.0,
+                        "stop_price": 95.0,
+                        "ret5_future_pct": ret,
+                        "trim5_touch_day": trim_day,
+                        "stop5_touch_day": stop_day,
+                        "trim5_before_stop": trim_before,
+                        "stop5_before_trim": stop_before,
+                    }
+                )
+
+        table = build_atr_exit_policy_segment_simulation(pd.DataFrame(rows), min_segment_n=10)
+
+        self.assertIn("action_label", set(table["segment_type"].astype(str)))
+        pullback_stop = table[
+            (table["segment_type"] == "action_label")
+            & (table["segment_value"] == "等拉回")
+            & (table["policy"] == "touched_stop_exit")
+        ].iloc[0]
+        self.assertEqual(int(pullback_stop["n"]), 10)
+        self.assertGreater(float(pullback_stop["delta_worst_vs_baseline"]), 0)
+
     def test_build_pullback_rule_recommendations_blocks_tail_risk_upgrades(self) -> None:
         confirmation = pd.DataFrame(
             [
@@ -1101,6 +1146,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("atr_exit_verification", payload["tables"])
         self.assertIn("## ATR Exit Policy Simulation", markdown)
         self.assertIn("atr_exit_policy_simulation", payload["tables"])
+        self.assertIn("## ATR Exit Policy Segment Simulation", markdown)
+        self.assertIn("atr_exit_policy_segment_simulation", payload["tables"])
         self.assertIn("## Path Risk Sequencing", markdown)
         self.assertIn("path_risk_sequencing", payload["tables"])
         self.assertIn("prioritize groups like", markdown)

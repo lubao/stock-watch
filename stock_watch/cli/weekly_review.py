@@ -1566,12 +1566,82 @@ def build_atr_exit_policy_simulation(alert_tracking: pd.DataFrame) -> pd.DataFra
     return result
 
 
+def build_atr_exit_policy_segment_simulation(
+    alert_tracking: pd.DataFrame,
+    *,
+    min_segment_n: int = 10,
+) -> pd.DataFrame:
+    columns = [
+        "segment_type",
+        "segment_value",
+        "horizon_days",
+        "watch_type",
+        "policy",
+        "n",
+        "stop_exit_count",
+        "trim_exit_count",
+        "win_rate",
+        "avg_ret",
+        "tail25_ret",
+        "worst_ret",
+        "best_ret",
+        "delta_avg_vs_baseline",
+        "delta_worst_vs_baseline",
+        "status",
+        "read",
+    ]
+    if alert_tracking.empty:
+        return pd.DataFrame(columns=columns)
+
+    segment_cols = [col for col in ["action_label", "scenario_label"] if col in alert_tracking.columns]
+    if not segment_cols:
+        return pd.DataFrame(columns=columns)
+
+    rows: list[pd.DataFrame] = []
+    for segment_col in segment_cols:
+        work = alert_tracking.copy()
+        work["_segment_value"] = work[segment_col].fillna("").astype(str).str.strip()
+        work.loc[work["_segment_value"].isin(["", "b''", "nan", "None"]), "_segment_value"] = "unknown"
+        for segment_value, segment_df in work.groupby("_segment_value", dropna=False):
+            simulated = build_atr_exit_policy_simulation(segment_df.drop(columns=["_segment_value"]))
+            if simulated.empty:
+                continue
+            simulated = simulated[pd.to_numeric(simulated["n"], errors="coerce") >= min_segment_n].copy()
+            if simulated.empty:
+                continue
+            simulated.insert(0, "segment_value", str(segment_value))
+            simulated.insert(0, "segment_type", segment_col)
+            rows.append(simulated)
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    result = pd.concat(rows, ignore_index=True)
+    result = result[columns].copy()
+    status_order = {
+        "research_candidate": 0,
+        "tail_hedge_costly": 1,
+        "worse_than_baseline": 2,
+        "keep_shadow": 3,
+        "baseline": 4,
+        "need_more_samples": 5,
+    }
+    result["_status_order"] = result["status"].map(status_order).fillna(99)
+    result["delta_worst_vs_baseline"] = pd.to_numeric(result["delta_worst_vs_baseline"], errors="coerce")
+    result["delta_avg_vs_baseline"] = pd.to_numeric(result["delta_avg_vs_baseline"], errors="coerce")
+    result = result.sort_values(
+        by=["_status_order", "delta_worst_vs_baseline", "delta_avg_vs_baseline", "segment_type", "segment_value", "horizon_days", "watch_type", "policy"],
+        ascending=[True, False, False, True, True, True, True, True],
+    ).drop(columns=["_status_order"])
+    return result
+
+
 def build_weekly_decision_panel(
     decisions: dict[str, dict[str, object]],
     trade_simulation: pd.DataFrame,
     pullback_rules: pd.DataFrame,
     atr_exit_verification: pd.DataFrame | None = None,
     atr_exit_policy_simulation: pd.DataFrame | None = None,
+    atr_exit_policy_segment_simulation: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     columns = ["bucket", "rule", "source", "status", "evidence", "next_action"]
     rows: list[dict[str, object]] = []
@@ -1699,6 +1769,39 @@ def build_weekly_decision_panel(
                             f"delta_worst={float(row.get('delta_worst_vs_baseline', 0.0) or 0.0):.2f}%"
                         ),
                         "next_action": str(row.get("read", "保留 shadow policy simulation。")),
+                    }
+                )
+
+    if isinstance(atr_exit_policy_segment_simulation, pd.DataFrame) and not atr_exit_policy_segment_simulation.empty:
+        segment_work = atr_exit_policy_segment_simulation.copy()
+        segment_work = segment_work[segment_work["policy"].astype(str) != "baseline_close"].copy()
+        segment_work = segment_work[segment_work["status"].astype(str).isin(["research_candidate", "tail_hedge_costly"])].copy()
+        if not segment_work.empty:
+            segment_work["delta_worst_vs_baseline"] = pd.to_numeric(segment_work.get("delta_worst_vs_baseline"), errors="coerce").fillna(0.0)
+            segment_work["delta_avg_vs_baseline"] = pd.to_numeric(segment_work.get("delta_avg_vs_baseline"), errors="coerce").fillna(0.0)
+            segment_work = segment_work.sort_values(
+                by=["delta_worst_vs_baseline", "delta_avg_vs_baseline"],
+                ascending=[False, False],
+            ).head(4)
+            for _, row in segment_work.iterrows():
+                status = str(row.get("status", ""))
+                rows.append(
+                    {
+                        "bucket": "Ready to Review" if status == "research_candidate" else "Keep Shadow",
+                        "rule": (
+                            f"{row.get('segment_type', '')}={row.get('segment_value', '')} / "
+                            f"{int(row.get('horizon_days', 0) or 0)}D {row.get('watch_type', '')} {row.get('policy', '')}"
+                        ),
+                        "source": "atr_exit_policy_segment_simulation",
+                        "status": status,
+                        "evidence": (
+                            f"n={int(row.get('n', 0) or 0)}, "
+                            f"avg={float(row.get('avg_ret', 0.0) or 0.0):.2f}%, "
+                            f"worst={float(row.get('worst_ret', 0.0) or 0.0):.2f}%, "
+                            f"delta_avg={float(row.get('delta_avg_vs_baseline', 0.0) or 0.0):.2f}%, "
+                            f"delta_worst={float(row.get('delta_worst_vs_baseline', 0.0) or 0.0):.2f}%"
+                        ),
+                        "next_action": str(row.get("read", "保留分層 shadow policy simulation。")),
                     }
                 )
 
@@ -2257,6 +2360,7 @@ def build_weekly_review_payload(
     decisions = build_decisions(parts, band_parts, feedback_csv)
     atr_exit_verification = build_atr_exit_verification(band_parts.get("band_checkpoints", pd.DataFrame()))
     atr_exit_policy_simulation = build_atr_exit_policy_simulation(alert_df)
+    atr_exit_policy_segment_simulation = build_atr_exit_policy_segment_simulation(alert_df)
     decisions["atr"] = build_atr_exit_decision(atr_exit_verification, atr_exit_policy_simulation)
     spec_risk_overview = build_spec_risk_overview(parts)
     rank_spec_coverage = build_rank_spec_risk_coverage(rank_csv)
@@ -2284,6 +2388,7 @@ def build_weekly_review_payload(
         pullback_rule_recommendations,
         atr_exit_verification,
         atr_exit_policy_simulation,
+        atr_exit_policy_segment_simulation,
     )
 
     overall_by_signal = parts.get("overall_by_signal", pd.DataFrame())
@@ -2329,6 +2434,7 @@ def build_weekly_review_payload(
             "weekly_decision_panel": weekly_decision_panel.to_dict(orient="records"),
             "atr_exit_verification": atr_exit_verification.to_dict(orient="records"),
             "atr_exit_policy_simulation": atr_exit_policy_simulation.to_dict(orient="records"),
+            "atr_exit_policy_segment_simulation": atr_exit_policy_segment_simulation.to_dict(orient="records"),
             "full_short_gate_promotion_watch": full_parts.get("short_gate_promotion_watch", pd.DataFrame()).to_dict(orient="records"),
             "full_short_gate_action_context": full_parts.get("short_gate_action_context", pd.DataFrame()).to_dict(orient="records"),
             "full_short_gate_simulation": full_parts.get("short_gate_simulation", pd.DataFrame()).to_dict(orient="records"),
@@ -2543,6 +2649,7 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     lines.extend(["## ATR Band Checkpoints", _table_markdown(pd.DataFrame(tables.get("atr_band_checkpoints", []))).rstrip(), ""])
     lines.extend(["## ATR Exit Verification", _table_markdown(pd.DataFrame(tables.get("atr_exit_verification", []))).rstrip(), ""])
     lines.extend(["## ATR Exit Policy Simulation", _table_markdown(pd.DataFrame(tables.get("atr_exit_policy_simulation", []))).rstrip(), ""])
+    lines.extend(["## ATR Exit Policy Segment Simulation", _table_markdown(pd.DataFrame(tables.get("atr_exit_policy_segment_simulation", [])).head(80)).rstrip(), ""])
     lines.extend(["## Path Risk Sequencing", _table_markdown(pd.DataFrame(tables.get("path_risk_sequencing", []))).rstrip(), ""])
     return "\n".join(lines)
 
