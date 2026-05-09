@@ -24,6 +24,7 @@ from stock_watch.cli.weekly_review import build_pullback_quality_diagnostics
 from stock_watch.cli.weekly_review import build_pullback_rule_recommendations
 from stock_watch.cli.weekly_review import build_short_pullback_trade_simulation_shadow
 from stock_watch.cli.weekly_review import build_spec_risk_overview
+from stock_watch.cli.weekly_review import build_weekly_decision_panel
 from stock_watch.cli.weekly_review import build_weekly_review_payload
 from stock_watch.cli.weekly_review import filter_recent_signal_dates
 from stock_watch.cli.weekly_review import render_weekly_review_markdown
@@ -482,6 +483,63 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertEqual(confirm_pullback["status"], "blocked_no_entry")
         self.assertEqual(high_risk_unconfirmed["position_size"], "0 倉")
 
+    def test_build_weekly_decision_panel_buckets_shadow_and_tail_risk(self) -> None:
+        decisions = {
+            "trade_simulation": {
+                "status": "shadow_only",
+                "detail": "不進 Telegram",
+            },
+            "atr": {
+                "status": "review",
+                "detail": "需要人工確認",
+            },
+        }
+        trade_simulation = pd.DataFrame(
+            [
+                {
+                    "rule": "高風險拉回",
+                    "confirmation": "隔日轉強",
+                    "status": "shadow_low_sample",
+                    "position_fraction": 0.25,
+                    "n": 2,
+                    "avg_trade_ret_5d": 10.6,
+                    "tail25_trade_ret_5d": 6.86,
+                    "worst_trade_ret_5d": 3.11,
+                },
+                {
+                    "rule": "需確認拉回",
+                    "confirmation": "隔日轉強",
+                    "status": "blocked_no_entry",
+                    "position_fraction": 0.0,
+                    "n": 3,
+                    "avg_trade_ret_5d": -1.33,
+                    "tail25_trade_ret_5d": -9.19,
+                    "worst_trade_ret_5d": -14.11,
+                },
+            ]
+        )
+        pullback_rules = pd.DataFrame(
+            [
+                {
+                    "rule": "需確認拉回",
+                    "condition": "即使隔日轉強",
+                    "status": "block_upgrade",
+                    "evidence": "n=3",
+                    "note": "不能升級",
+                }
+            ]
+        )
+
+        panel = build_weekly_decision_panel(decisions, trade_simulation, pullback_rules)
+
+        buckets = set(panel["bucket"].astype(str))
+        self.assertIn("Need Human Decision", buckets)
+        self.assertIn("Need More Samples", buckets)
+        self.assertIn("Blocked by Tail Risk", buckets)
+        self.assertIn("Keep Shadow", buckets)
+        tail_row = panel[panel["bucket"] == "Blocked by Tail Risk"].iloc[0]
+        self.assertIn("需確認拉回", tail_row["rule"])
+
     def test_build_pullback_rule_recommendations_blocks_tail_risk_upgrades(self) -> None:
         confirmation = pd.DataFrame(
             [
@@ -887,6 +945,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("## Spec Risk Check", markdown)
         self.assertIn("## Short Gate Promotion Watch", markdown)
         self.assertIn("## Short Gate Simulation", markdown)
+        self.assertIn("## Weekly Decision Panel", markdown)
+        self.assertIn("weekly_decision_panel", payload["tables"])
         self.assertIn("## Full Short Gate Promotion Watch", markdown)
         self.assertIn("## Recent Factor High-Low Spread", markdown)
         self.assertIn("## Full Factor High-Low Spread", markdown)

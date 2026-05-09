@@ -1207,6 +1207,107 @@ def build_trade_simulation_shadow_decision(trade_simulation: pd.DataFrame) -> di
     }
 
 
+def build_weekly_decision_panel(
+    decisions: dict[str, dict[str, object]],
+    trade_simulation: pd.DataFrame,
+    pullback_rules: pd.DataFrame,
+) -> pd.DataFrame:
+    columns = ["bucket", "rule", "source", "status", "evidence", "next_action"]
+    rows: list[dict[str, object]] = []
+
+    status_to_bucket = {
+        "review": "Need Human Decision",
+        "block": "Blocked / Guardrail",
+        "hold": "Keep Shadow",
+        "shadow_only": "Keep Shadow",
+    }
+    for rule, decision in decisions.items():
+        status = str(decision.get("status", "hold"))
+        rows.append(
+            {
+                "bucket": status_to_bucket.get(status, "Keep Shadow"),
+                "rule": rule,
+                "source": "weekly_decisions",
+                "status": status,
+                "evidence": str(decision.get("detail", "")),
+                "next_action": "人工確認是否要調規則" if status == "review" else "維持現行規則並累積樣本",
+            }
+        )
+
+    if isinstance(trade_simulation, pd.DataFrame) and not trade_simulation.empty:
+        work = trade_simulation.copy()
+        for numeric_col in ["n", "avg_trade_ret_5d", "tail25_trade_ret_5d", "worst_trade_ret_5d", "position_fraction"]:
+            if numeric_col in work.columns:
+                work[numeric_col] = pd.to_numeric(work[numeric_col], errors="coerce")
+        for _, row in work.iterrows():
+            status = str(row.get("status", ""))
+            rule_name = f"{row.get('rule', '')} + {row.get('confirmation', '')}".strip()
+            tail25 = float(row.get("tail25_trade_ret_5d", 0.0) or 0.0)
+            worst = float(row.get("worst_trade_ret_5d", 0.0) or 0.0)
+            position_fraction = float(row.get("position_fraction", 0.0) or 0.0)
+            if status == "shadow_low_sample":
+                bucket = "Need More Samples"
+                next_action = "繼續 shadow，不進 Telegram；等樣本數提升再討論升級"
+            elif position_fraction <= 0 and (tail25 <= -4 or worst <= -8):
+                bucket = "Blocked by Tail Risk"
+                next_action = "維持不進場；除非後續 tail 明顯改善才重開討論"
+            elif status == "shadow_candidate":
+                bucket = "Ready to Review"
+                next_action = "進入人工 review，不直接升級成 live rule"
+            else:
+                bucket = "Keep Shadow"
+                next_action = "保留觀察，不改 live 規則"
+            rows.append(
+                {
+                    "bucket": bucket,
+                    "rule": rule_name,
+                    "source": "trade_simulation_shadow",
+                    "status": status,
+                    "evidence": (
+                        f"n={int(row.get('n', 0) or 0)}, "
+                        f"avg={float(row.get('avg_trade_ret_5d', 0.0) or 0.0):.2f}%, "
+                        f"tail25={tail25:.2f}%, worst={worst:.2f}%"
+                    ),
+                    "next_action": next_action,
+                }
+            )
+
+    if isinstance(pullback_rules, pd.DataFrame) and not pullback_rules.empty:
+        for _, row in pullback_rules.iterrows():
+            status = str(row.get("status", ""))
+            if status in {"block_upgrade", "blocked"}:
+                bucket = "Blocked / Guardrail"
+            elif status in {"active_low_sample", "research_only"}:
+                bucket = "Need More Samples"
+            else:
+                bucket = "Keep Shadow"
+            rows.append(
+                {
+                    "bucket": bucket,
+                    "rule": f"{row.get('rule', '')} / {row.get('condition', '')}",
+                    "source": "pullback_rule_recommendations",
+                    "status": status,
+                    "evidence": str(row.get("evidence", "")),
+                    "next_action": str(row.get("note", "")),
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    panel = pd.DataFrame(rows, columns=columns)
+    bucket_order = {
+        "Need Human Decision": 0,
+        "Ready to Review": 1,
+        "Blocked by Tail Risk": 2,
+        "Blocked / Guardrail": 3,
+        "Need More Samples": 4,
+        "Keep Shadow": 5,
+    }
+    panel["_bucket_order"] = panel["bucket"].map(bucket_order).fillna(99)
+    panel = panel.sort_values(by=["_bucket_order", "source", "rule"]).drop(columns=["_bucket_order"])
+    return panel
+
+
 def build_pullback_rule_recommendations(confirmation: pd.DataFrame) -> pd.DataFrame:
     columns = ["rule", "condition", "status", "action_guide", "position_size", "evidence", "note"]
     if confirmation.empty:
@@ -1744,6 +1845,11 @@ def build_weekly_review_payload(
     decisions["trade_simulation"] = build_trade_simulation_shadow_decision(full_trade_simulation_shadow)
     pullback_rule_recommendations = build_pullback_rule_recommendations(full_pullback_confirmation)
     pullback_exit_guard_recommendations = build_pullback_exit_guard_recommendations(full_pullback_confirmation)
+    weekly_decision_panel = build_weekly_decision_panel(
+        decisions,
+        full_trade_simulation_shadow,
+        pullback_rule_recommendations,
+    )
 
     overall_by_signal = parts.get("overall_by_signal", pd.DataFrame())
     weekly_checkpoint = parts.get("delta_ok_minus_below", pd.DataFrame())
@@ -1785,6 +1891,7 @@ def build_weekly_review_payload(
             "spec_risk_check": spec_risk_check.to_dict(orient="records"),
             "short_gate_promotion_watch": short_gate_promotion_watch.to_dict(orient="records"),
             "short_gate_simulation": short_gate_simulation.to_dict(orient="records"),
+            "weekly_decision_panel": weekly_decision_panel.to_dict(orient="records"),
             "full_short_gate_promotion_watch": full_parts.get("short_gate_promotion_watch", pd.DataFrame()).to_dict(orient="records"),
             "full_short_gate_action_context": full_parts.get("short_gate_action_context", pd.DataFrame()).to_dict(orient="records"),
             "full_short_gate_simulation": full_parts.get("short_gate_simulation", pd.DataFrame()).to_dict(orient="records"),
@@ -1850,6 +1957,8 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     for key in ["threshold", "short_gate", "atr", "feedback", "spec_risk", "trade_simulation"]:
         item = decisions.get(key, {})
         lines.append(f"- `{key}`: `{item.get('status', 'hold')}` — {item.get('detail', '')}")
+
+    lines.extend(["", "## Weekly Decision Panel", _table_markdown(pd.DataFrame(tables.get("weekly_decision_panel", []))).rstrip(), ""])
 
     lines.extend(["", "## Data Quality Gate", ""])
     if isinstance(data_quality_gate, dict):
