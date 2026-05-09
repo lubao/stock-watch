@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from stock_watch.cli.weekly_review import build_decisions
+from stock_watch.cli.weekly_review import build_atr_exit_verification
 from stock_watch.cli.weekly_review import build_candidate_expansion_plan
 from stock_watch.cli.weekly_review import build_candidate_fill_directions
 from stock_watch.cli.weekly_review import build_candidate_source_plan
@@ -529,16 +530,79 @@ class RunWeeklyReviewTests(unittest.TestCase):
                 }
             ]
         )
+        atr_exit = pd.DataFrame(
+            [
+                {
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "n": 20,
+                    "touch_stop_rate_pct": 5.0,
+                    "close_stop_rate_pct": 0.0,
+                    "trim_first_rate_pct": 55.0,
+                    "worst_mae_pct": -16.62,
+                    "status": "review_intraday_tail",
+                    "next_action": "驗證 touched-stop 提醒是否能降低 worst MAE。",
+                }
+            ]
+        )
 
-        panel = build_weekly_decision_panel(decisions, trade_simulation, pullback_rules)
+        panel = build_weekly_decision_panel(decisions, trade_simulation, pullback_rules, atr_exit)
 
         buckets = set(panel["bucket"].astype(str))
         self.assertIn("Need Human Decision", buckets)
+        self.assertIn("Ready to Review", buckets)
         self.assertIn("Need More Samples", buckets)
         self.assertIn("Blocked by Tail Risk", buckets)
         self.assertIn("Keep Shadow", buckets)
         tail_row = panel[panel["bucket"] == "Blocked by Tail Risk"].iloc[0]
         self.assertIn("需確認拉回", tail_row["rule"])
+        atr_row = panel[panel["source"] == "atr_exit_verification"].iloc[0]
+        self.assertEqual(atr_row["bucket"], "Ready to Review")
+
+    def test_build_atr_exit_verification_compares_touch_and_close_stop(self) -> None:
+        checkpoints = pd.DataFrame(
+            [
+                {
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "n": 20,
+                    "path_n": 20,
+                    "sequence_n": 20,
+                    "closed_below_stop_rate_pct": 0.0,
+                    "touched_below_stop_rate_pct": 5.0,
+                    "stop_touch_recovered_rate_pct": 100.0,
+                    "trim_before_stop_rate_pct": 55.0,
+                    "stop_before_trim_rate_pct": 5.0,
+                    "same_day_stop_trim_rate_pct": 0.0,
+                    "trim_touch_failed_rate_pct": 18.2,
+                    "avg_ret_pct": 5.12,
+                    "avg_mfe_pct": 11.37,
+                    "avg_mae_pct": -4.74,
+                    "worst_mae_pct": -16.62,
+                },
+                {
+                    "horizon_days": 5,
+                    "watch_type": "midlong",
+                    "n": 4,
+                    "path_n": 4,
+                    "sequence_n": 4,
+                    "closed_below_stop_rate_pct": 0.0,
+                    "touched_below_stop_rate_pct": 0.0,
+                    "trim_before_stop_rate_pct": 0.0,
+                    "stop_before_trim_rate_pct": 0.0,
+                    "worst_mae_pct": -2.0,
+                },
+            ]
+        )
+
+        table = build_atr_exit_verification(checkpoints)
+
+        short_row = table[table["watch_type"] == "short"].iloc[0]
+        thin_row = table[table["watch_type"] == "midlong"].iloc[0]
+        self.assertEqual(short_row["intraday_stop_only_rate_pct"], 5.0)
+        self.assertEqual(short_row["status"], "review_close_stop_bias")
+        self.assertIn("盤中碰 stop", short_row["exit_read"])
+        self.assertEqual(thin_row["status"], "need_more_samples")
 
     def test_build_pullback_rule_recommendations_blocks_tail_risk_upgrades(self) -> None:
         confirmation = pd.DataFrame(
@@ -974,6 +1038,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("## Current Suspicious Candidates", markdown)
         self.assertIn("## ATR Band Checkpoints", markdown)
         self.assertIn("atr_band_checkpoints", payload["tables"])
+        self.assertIn("## ATR Exit Verification", markdown)
+        self.assertIn("atr_exit_verification", payload["tables"])
         self.assertIn("## Path Risk Sequencing", markdown)
         self.assertIn("path_risk_sequencing", payload["tables"])
         self.assertIn("prioritize groups like", markdown)

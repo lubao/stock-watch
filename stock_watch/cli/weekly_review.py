@@ -1207,10 +1207,168 @@ def build_trade_simulation_shadow_decision(trade_simulation: pd.DataFrame) -> di
     }
 
 
+def build_atr_exit_verification(band_checkpoints: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "horizon_days",
+        "watch_type",
+        "n",
+        "path_n",
+        "sequence_n",
+        "close_stop_rate_pct",
+        "touch_stop_rate_pct",
+        "intraday_stop_only_rate_pct",
+        "stop_recovered_rate_pct",
+        "trim_first_rate_pct",
+        "stop_first_rate_pct",
+        "same_day_stop_trim_rate_pct",
+        "trim_failed_rate_pct",
+        "avg_ret_pct",
+        "avg_mfe_pct",
+        "avg_mae_pct",
+        "worst_mae_pct",
+        "exit_read",
+        "status",
+        "next_action",
+    ]
+    if band_checkpoints.empty:
+        return pd.DataFrame(columns=columns)
+
+    work = band_checkpoints.copy()
+    required = {"horizon_days", "watch_type", "n"}
+    if not required.issubset(set(work.columns)):
+        return pd.DataFrame(columns=columns)
+    numeric_cols = [
+        "horizon_days",
+        "n",
+        "path_n",
+        "sequence_n",
+        "closed_below_stop_rate_pct",
+        "touched_below_stop_rate_pct",
+        "stop_touch_recovered_rate_pct",
+        "trim_before_stop_rate_pct",
+        "stop_before_trim_rate_pct",
+        "same_day_stop_trim_rate_pct",
+        "trim_touch_failed_rate_pct",
+        "avg_ret_pct",
+        "avg_mfe_pct",
+        "avg_mae_pct",
+        "worst_mae_pct",
+    ]
+    for col in numeric_cols:
+        if col in work.columns:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+
+    rows: list[dict[str, object]] = []
+    for _, row in work.iterrows():
+        horizon = int(row.get("horizon_days", 0) or 0)
+        if horizon not in {5, 20}:
+            continue
+        n = int(row.get("n", 0) or 0)
+        path_n = int(row.get("path_n", 0) or 0)
+        sequence_n = int(row.get("sequence_n", 0) or 0)
+        close_stop_rate = float(row.get("closed_below_stop_rate_pct", 0.0) or 0.0)
+        touch_stop_rate = float(row.get("touched_below_stop_rate_pct", 0.0) or 0.0)
+        intraday_stop_only = max(0.0, round(touch_stop_rate - close_stop_rate, 1))
+        stop_recovered_rate = float(row.get("stop_touch_recovered_rate_pct", 0.0) or 0.0)
+        trim_first_rate = float(row.get("trim_before_stop_rate_pct", 0.0) or 0.0)
+        stop_first_rate = float(row.get("stop_before_trim_rate_pct", 0.0) or 0.0)
+        same_day_rate = float(row.get("same_day_stop_trim_rate_pct", 0.0) or 0.0)
+        trim_failed_rate = float(row.get("trim_touch_failed_rate_pct", 0.0) or 0.0)
+        worst_mae = float(row.get("worst_mae_pct", 0.0) or 0.0)
+
+        if n < 10 or path_n < 10:
+            status = "need_more_samples"
+            exit_read = "樣本仍薄，先不要改 exit。"
+            next_action = "繼續累積成熟樣本。"
+        elif touch_stop_rate > close_stop_rate and stop_recovered_rate >= 50 and stop_first_rate <= 10:
+            status = "review_close_stop_bias"
+            exit_read = "盤中碰 stop 明顯多於收盤跌破，且不少可收回；硬用 touched-stop 可能太吵。"
+            next_action = "優先比較收盤停損 vs 盤中提醒，不直接自動停損。"
+        elif stop_first_rate > 10 or worst_mae <= -12:
+            status = "review_intraday_tail"
+            exit_read = "盤中尾端風險存在，不能只看收盤結果。"
+            next_action = "驗證 touched-stop 提醒是否能降低 worst MAE。"
+        elif trim_first_rate >= 30 and trim_failed_rate >= 50:
+            status = "review_trim_guard"
+            exit_read = "常先碰停利但收盤未必守住，停利線更像分批提醒。"
+            next_action = "驗證碰 trim 後分批落袋是否優於等收盤。"
+        else:
+            status = "keep_shadow"
+            exit_read = "目前沒有足夠證據改 exit。"
+            next_action = "維持 shadow 檢查。"
+
+        rows.append(
+            {
+                "horizon_days": horizon,
+                "watch_type": str(row.get("watch_type", "")),
+                "n": n,
+                "path_n": path_n,
+                "sequence_n": sequence_n,
+                "close_stop_rate_pct": round(close_stop_rate, 1),
+                "touch_stop_rate_pct": round(touch_stop_rate, 1),
+                "intraday_stop_only_rate_pct": intraday_stop_only,
+                "stop_recovered_rate_pct": round(stop_recovered_rate, 1),
+                "trim_first_rate_pct": round(trim_first_rate, 1),
+                "stop_first_rate_pct": round(stop_first_rate, 1),
+                "same_day_stop_trim_rate_pct": round(same_day_rate, 1),
+                "trim_failed_rate_pct": round(trim_failed_rate, 1),
+                "avg_ret_pct": row.get("avg_ret_pct"),
+                "avg_mfe_pct": row.get("avg_mfe_pct"),
+                "avg_mae_pct": row.get("avg_mae_pct"),
+                "worst_mae_pct": row.get("worst_mae_pct"),
+                "exit_read": exit_read,
+                "status": status,
+                "next_action": next_action,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns).sort_values(
+        by=["status", "horizon_days", "watch_type"],
+        ascending=[True, True, True],
+    )
+
+
+def build_atr_exit_decision(atr_exit_verification: pd.DataFrame) -> dict[str, object]:
+    if atr_exit_verification.empty:
+        return {
+            "status": "hold",
+            "detail": "`ATR exit verification` 尚無足夠成熟樣本；維持 shadow 分析，不改 exit。",
+        }
+
+    work = atr_exit_verification.copy()
+    review = work[work["status"].astype(str).str.startswith("review_")].copy()
+    if review.empty:
+        return {
+            "status": "hold",
+            "detail": "`ATR exit verification` 目前沒有需要升級討論的 exit pattern；維持 shadow 分析。",
+        }
+
+    priority = {
+        "review_intraday_tail": 0,
+        "review_close_stop_bias": 1,
+        "review_trim_guard": 2,
+    }
+    review["_priority"] = review["status"].map(priority).fillna(9)
+    review["_worst_mae"] = pd.to_numeric(review.get("worst_mae_pct"), errors="coerce").fillna(0.0)
+    review = review.sort_values(by=["_priority", "_worst_mae", "horizon_days", "watch_type"]).copy()
+    top = review.iloc[0]
+    return {
+        "status": "review",
+        "detail": (
+            "`ATR exit verification` 已完成 shadow 分析；先不改 live exit。"
+            f" 目前最需要 review：`{int(top.get('horizon_days', 0))}D {top.get('watch_type', '')}` "
+            f"`{top.get('status', '')}`，{top.get('next_action', '')}"
+        ),
+    }
+
+
 def build_weekly_decision_panel(
     decisions: dict[str, dict[str, object]],
     trade_simulation: pd.DataFrame,
     pullback_rules: pd.DataFrame,
+    atr_exit_verification: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     columns = ["bucket", "rule", "source", "status", "evidence", "next_action"]
     rows: list[dict[str, object]] = []
@@ -1267,6 +1425,36 @@ def build_weekly_decision_panel(
                         f"n={int(row.get('n', 0) or 0)}, "
                         f"avg={float(row.get('avg_trade_ret_5d', 0.0) or 0.0):.2f}%, "
                         f"tail25={tail25:.2f}%, worst={worst:.2f}%"
+                    ),
+                    "next_action": next_action,
+                }
+            )
+
+    if isinstance(atr_exit_verification, pd.DataFrame) and not atr_exit_verification.empty:
+        atr_work = atr_exit_verification.copy()
+        for _, row in atr_work.iterrows():
+            status = str(row.get("status", ""))
+            if status == "need_more_samples":
+                bucket = "Need More Samples"
+                next_action = str(row.get("next_action", "繼續累積成熟樣本。"))
+            elif status.startswith("review_"):
+                bucket = "Ready to Review"
+                next_action = str(row.get("next_action", "進入 exit policy shadow review。"))
+            else:
+                bucket = "Keep Shadow"
+                next_action = str(row.get("next_action", "維持 shadow 檢查。"))
+            rows.append(
+                {
+                    "bucket": bucket,
+                    "rule": f"{int(row.get('horizon_days', 0) or 0)}D {row.get('watch_type', '')} ATR exit",
+                    "source": "atr_exit_verification",
+                    "status": status,
+                    "evidence": (
+                        f"n={int(row.get('n', 0) or 0)}, "
+                        f"touch_stop={float(row.get('touch_stop_rate_pct', 0.0) or 0.0):.1f}%, "
+                        f"close_stop={float(row.get('close_stop_rate_pct', 0.0) or 0.0):.1f}%, "
+                        f"trim_first={float(row.get('trim_first_rate_pct', 0.0) or 0.0):.1f}%, "
+                        f"worst_mae={float(row.get('worst_mae_pct', 0.0) or 0.0):.2f}%"
                     ),
                     "next_action": next_action,
                 }
@@ -1825,6 +2013,8 @@ def build_weekly_review_payload(
         alert_df = pd.DataFrame()
     band_parts = summarize_atr_band_checkpoints(alert_df)
     decisions = build_decisions(parts, band_parts, feedback_csv)
+    atr_exit_verification = build_atr_exit_verification(band_parts.get("band_checkpoints", pd.DataFrame()))
+    decisions["atr"] = build_atr_exit_decision(atr_exit_verification)
     spec_risk_overview = build_spec_risk_overview(parts)
     rank_spec_coverage = build_rank_spec_risk_coverage(rank_csv)
     candidate_source_summary = build_rank_candidate_source_summary(rank_csv)
@@ -1849,6 +2039,7 @@ def build_weekly_review_payload(
         decisions,
         full_trade_simulation_shadow,
         pullback_rule_recommendations,
+        atr_exit_verification,
     )
 
     overall_by_signal = parts.get("overall_by_signal", pd.DataFrame())
@@ -1892,6 +2083,7 @@ def build_weekly_review_payload(
             "short_gate_promotion_watch": short_gate_promotion_watch.to_dict(orient="records"),
             "short_gate_simulation": short_gate_simulation.to_dict(orient="records"),
             "weekly_decision_panel": weekly_decision_panel.to_dict(orient="records"),
+            "atr_exit_verification": atr_exit_verification.to_dict(orient="records"),
             "full_short_gate_promotion_watch": full_parts.get("short_gate_promotion_watch", pd.DataFrame()).to_dict(orient="records"),
             "full_short_gate_action_context": full_parts.get("short_gate_action_context", pd.DataFrame()).to_dict(orient="records"),
             "full_short_gate_simulation": full_parts.get("short_gate_simulation", pd.DataFrame()).to_dict(orient="records"),
@@ -2104,6 +2296,7 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     lines.extend(["## Current Suspicious Candidates", _table_markdown(pd.DataFrame(tables.get("current_rank_spec_risk_top_candidates", []))).rstrip(), ""])
     lines.extend(["## ATR Band Coverage", _table_markdown(pd.DataFrame(tables.get("atr_band_coverage", []))).rstrip(), ""])
     lines.extend(["## ATR Band Checkpoints", _table_markdown(pd.DataFrame(tables.get("atr_band_checkpoints", []))).rstrip(), ""])
+    lines.extend(["## ATR Exit Verification", _table_markdown(pd.DataFrame(tables.get("atr_exit_verification", []))).rstrip(), ""])
     lines.extend(["## Path Risk Sequencing", _table_markdown(pd.DataFrame(tables.get("path_risk_sequencing", []))).rstrip(), ""])
     return "\n".join(lines)
 
