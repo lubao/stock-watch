@@ -2,6 +2,8 @@
 
 Generated: 2026-04-27
 
+Updated: 2026-05-09
+
 ## Current Recommendation
 
 Keep our core strategy local and use public repos as references for infrastructure, not as a source of copied stock-picking rules.
@@ -69,3 +71,21 @@ When reviewing any public stock repo, score it on:
 Do not change the live strategy gate yet.
 
 The best near-term move is to keep collecting true preopen snapshots and postclose outcomes, while using the public-repo patterns above to improve our evaluation/reporting layer.
+
+## 2026-05-09 Addendum
+
+After adding forward low/high path tracking, the best next research target is no longer generic backtesting. It is **path-aware execution research**:
+
+- Use `vectorbt` as inspiration for fast sensitivity tables, not as a dependency yet.
+- Use `alphalens` as the model for factor quantile / forward-return diagnostics.
+- Use `quantstats` as the model for portfolio risk reporting.
+- Use `backtesting.py` as the model for compact trade-stat presentation.
+- Use `qlib` and `FinRL-X` only for architecture vocabulary: data → selection → allocation → timing → risk → execution.
+
+Current local priority:
+
+1. Build path-risk tables from `alert_tracking.csv`.
+2. Add factor tear sheets for existing scores and labels.
+3. Separate investment-mode Telegram guidance from trading-mode portfolio decisions.
+
+See `docs/research/NEXT_RESEARCH_TARGETS_2026_05_09.md` for the active research plan.
