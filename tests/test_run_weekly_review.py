@@ -19,6 +19,7 @@ from stock_watch.cli.weekly_review import build_rank_spec_risk_coverage
 from stock_watch.cli.weekly_review import build_research_diagnostics
 from stock_watch.cli.weekly_review import build_data_quality_gate
 from stock_watch.cli.weekly_review import build_pullback_confirmation_diagnostics
+from stock_watch.cli.weekly_review import build_pullback_exit_guard_recommendations
 from stock_watch.cli.weekly_review import build_pullback_quality_diagnostics
 from stock_watch.cli.weekly_review import build_pullback_rule_recommendations
 from stock_watch.cli.weekly_review import build_spec_risk_overview
@@ -475,6 +476,44 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertEqual(confirm_risk["status"], "block_upgrade")
         self.assertEqual(confirm_risk["position_size"], "0 倉")
 
+    def test_build_pullback_exit_guard_recommendations_adds_close_based_guards(self) -> None:
+        confirmation = pd.DataFrame(
+            [
+                {
+                    "pullback_quality": "高風險拉回",
+                    "confirmation": "隔日轉強",
+                    "n": 2,
+                    "win_rate_5d": 100.0,
+                    "avg_5d": 14.12,
+                    "worst_5d": 4.23,
+                },
+                {
+                    "pullback_quality": "健康拉回",
+                    "confirmation": "隔日小跌",
+                    "n": 4,
+                    "win_rate_5d": 50.0,
+                    "avg_5d": 3.19,
+                    "worst_5d": -4.59,
+                },
+                {
+                    "pullback_quality": "需確認拉回",
+                    "confirmation": "隔日轉強",
+                    "n": 3,
+                    "win_rate_5d": 66.7,
+                    "avg_5d": 2.69,
+                    "worst_5d": -12.41,
+                },
+            ]
+        )
+
+        guards = build_pullback_exit_guard_recommendations(confirmation)
+
+        high_risk = guards[guards["setup"] == "高風險拉回 / 可小試"].iloc[0]
+        blocked = guards[guards["setup"] == "需確認拉回 / 只觀察"].iloc[0]
+        self.assertEqual(high_risk["initial_size"], "0.25 倉")
+        self.assertIn("單日 -2%", high_risk["close_exit_guard"])
+        self.assertEqual(blocked["status"], "blocked_tail_risk")
+
     def test_build_data_quality_gate_flags_clean_and_pending_rows(self) -> None:
         snapshots = pd.DataFrame(
             [
@@ -823,6 +862,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("full_short_pullback_confirmation", payload["tables"])
         self.assertIn("## Short Pullback Rule Recommendations", markdown)
         self.assertIn("short_pullback_rule_recommendations", payload["tables"])
+        self.assertIn("## Short Pullback Exit Guard Recommendations", markdown)
+        self.assertIn("short_pullback_exit_guard_recommendations", payload["tables"])
         self.assertIn("## Full Tail Risk By Action", markdown)
         self.assertIn("## Current Rank Spec Risk By Group", markdown)
         self.assertIn("## Current Rank Spec Risk By Layer", markdown)
