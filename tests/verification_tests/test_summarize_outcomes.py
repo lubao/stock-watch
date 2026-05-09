@@ -662,6 +662,13 @@ class SummarizeOutcomesTests(unittest.TestCase):
                     "ret1_future_pct": 8.0,
                     "low1_future_pct": -2.0,
                     "high1_future_pct": 9.0,
+                    "trim1_touch_day": 1,
+                    "stop1_touch_day": 0,
+                    "trim1_before_stop": 1,
+                    "stop1_before_trim": 0,
+                    "same_day1_stop_trim": 0,
+                    "stop1_recovered_by_close": 0,
+                    "trim1_failed_by_close": 0,
                     "ret5_future_pct": None,
                     "ret20_future_pct": None,
                 },
@@ -674,6 +681,13 @@ class SummarizeOutcomesTests(unittest.TestCase):
                     "ret1_future_pct": -9.0,
                     "low1_future_pct": -10.0,
                     "high1_future_pct": 1.0,
+                    "trim1_touch_day": 0,
+                    "stop1_touch_day": 1,
+                    "trim1_before_stop": 0,
+                    "stop1_before_trim": 1,
+                    "same_day1_stop_trim": 0,
+                    "stop1_recovered_by_close": 0,
+                    "trim1_failed_by_close": 0,
                     "ret5_future_pct": None,
                     "ret20_future_pct": None,
                 },
@@ -692,6 +706,7 @@ class SummarizeOutcomesTests(unittest.TestCase):
         parts = summarize_atr_band_checkpoints(alert_tracking)
         self.assertFalse(parts["band_coverage"].empty)
         self.assertFalse(parts["band_checkpoints"].empty)
+        self.assertFalse(parts["path_risk_sequencing"].empty)
         short_1d = parts["band_checkpoints"][
             (parts["band_checkpoints"]["horizon_days"] == 1)
             & (parts["band_checkpoints"]["watch_type"] == "short")
@@ -705,6 +720,14 @@ class SummarizeOutcomesTests(unittest.TestCase):
         self.assertAlmostEqual(float(short_1d["avg_mae_pct"]), -6.0)
         self.assertAlmostEqual(float(short_1d["worst_mae_pct"]), -10.0)
         self.assertAlmostEqual(float(short_1d["best_mfe_pct"]), 9.0)
+        self.assertEqual(int(short_1d["sequence_n"]), 2)
+        self.assertEqual(int(short_1d["trim_before_stop"]), 1)
+        self.assertEqual(int(short_1d["stop_before_trim"]), 1)
+        self.assertEqual(int(short_1d["same_day_stop_trim"]), 0)
+        self.assertAlmostEqual(float(short_1d["trim_before_stop_rate_pct"]), 50.0)
+        self.assertAlmostEqual(float(short_1d["stop_before_trim_rate_pct"]), 50.0)
+        self.assertAlmostEqual(float(short_1d["avg_days_to_trim"]), 1.0)
+        self.assertAlmostEqual(float(short_1d["avg_days_to_stop"]), 1.0)
 
     def test_build_atr_band_findings_reports_insufficient_maturity(self) -> None:
         alert_tracking = pd.DataFrame(

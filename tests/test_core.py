@@ -924,6 +924,9 @@ class FeedbackTests(unittest.TestCase):
             self.assertAlmostEqual(float(saved.iloc[0]["ret1_future_pct"]), 2.0)
             self.assertAlmostEqual(float(saved.iloc[0]["low1_future_pct"]), -1.54)
             self.assertAlmostEqual(float(saved.iloc[0]["high5_future_pct"]), 12.12)
+            self.assertFalse(pd.isna(saved.iloc[0]["trim1_touch_day"]))
+            self.assertFalse(pd.isna(saved.iloc[0]["stop1_touch_day"]))
+            self.assertFalse(pd.isna(saved.iloc[0]["trim5_before_stop"]))
 
     def test_feedback_adjustment_uses_pl_ratio_as_tiebreaker(self) -> None:
         candidates = pd.DataFrame(

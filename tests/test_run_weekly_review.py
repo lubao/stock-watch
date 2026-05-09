@@ -871,6 +871,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("## Current Suspicious Candidates", markdown)
         self.assertIn("## ATR Band Checkpoints", markdown)
         self.assertIn("atr_band_checkpoints", payload["tables"])
+        self.assertIn("## Path Risk Sequencing", markdown)
+        self.assertIn("path_risk_sequencing", payload["tables"])
         self.assertIn("prioritize groups like", markdown)
         self.assertIn("3057.TW", markdown)
         self.assertIn("spec_risk", payload["decisions"])

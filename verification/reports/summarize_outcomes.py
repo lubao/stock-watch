@@ -707,23 +707,23 @@ def build_midlong_threshold_findings(parts: dict[str, pd.DataFrame]) -> list[str
 def summarize_atr_band_checkpoints(alert_tracking: pd.DataFrame) -> dict[str, pd.DataFrame]:
     empty = pd.DataFrame()
     if alert_tracking.empty:
-        return {"band_coverage": empty, "band_checkpoints": empty}
+        return {"band_coverage": empty, "band_checkpoints": empty, "path_risk_sequencing": empty}
 
     required = {"alert_close", "add_price", "trim_price", "stop_price", "watch_type"}
     if not required.issubset(set(alert_tracking.columns)):
-        return {"band_coverage": empty, "band_checkpoints": empty}
+        return {"band_coverage": empty, "band_checkpoints": empty, "path_risk_sequencing": empty}
 
     df = alert_tracking.copy()
     df["watch_type"] = df["watch_type"].astype(str).str.strip().str.lower()
     df = df[df["watch_type"].isin(["short", "midlong"])].copy()
     if df.empty:
-        return {"band_coverage": empty, "band_checkpoints": empty}
+        return {"band_coverage": empty, "band_checkpoints": empty, "path_risk_sequencing": empty}
 
     for col in ["alert_close", "add_price", "trim_price", "stop_price"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     band_ready = df.dropna(subset=["alert_close", "add_price", "trim_price", "stop_price"]).copy()
     if band_ready.empty:
-        return {"band_coverage": empty, "band_checkpoints": empty}
+        return {"band_coverage": empty, "band_checkpoints": empty, "path_risk_sequencing": empty}
 
     coverage_rows: list[dict[str, object]] = []
     checkpoint_rows: list[dict[str, object]] = []
@@ -754,6 +754,20 @@ def summarize_atr_band_checkpoints(alert_tracking: pd.DataFrame) -> dict[str, pd
                 matured[low_col] = pd.to_numeric(matured[low_col], errors="coerce")
                 matured[high_col] = pd.to_numeric(matured[high_col], errors="coerce")
                 path_matured = matured.dropna(subset=[low_col, high_col]).copy()
+            sequence_cols = [
+                f"trim{horizon}_touch_day",
+                f"stop{horizon}_touch_day",
+                f"trim{horizon}_before_stop",
+                f"stop{horizon}_before_trim",
+                f"same_day{horizon}_stop_trim",
+                f"stop{horizon}_recovered_by_close",
+                f"trim{horizon}_failed_by_close",
+            ]
+            sequence_matured = pd.DataFrame()
+            if all(col in matured.columns for col in sequence_cols):
+                for col in sequence_cols:
+                    matured[col] = pd.to_numeric(matured[col], errors="coerce")
+                sequence_matured = matured.dropna(subset=[f"trim{horizon}_touch_day", f"stop{horizon}_touch_day"]).copy()
 
             row = {
                 "horizon_days": horizon,
@@ -769,6 +783,14 @@ def summarize_atr_band_checkpoints(alert_tracking: pd.DataFrame) -> dict[str, pd
                 "avg_mae_pct": None,
                 "worst_mae_pct": None,
                 "best_mfe_pct": None,
+                "sequence_n": int(len(sequence_matured)),
+                "trim_before_stop": 0,
+                "stop_before_trim": 0,
+                "same_day_stop_trim": 0,
+                "stop_touch_recovered": 0,
+                "trim_touch_failed": 0,
+                "avg_days_to_trim": None,
+                "avg_days_to_stop": None,
                 "avg_ret_pct": round(float(matured[ret_col].mean()), 2),
             }
             if not path_matured.empty:
@@ -780,6 +802,18 @@ def summarize_atr_band_checkpoints(alert_tracking: pd.DataFrame) -> dict[str, pd
                 row["avg_mae_pct"] = round(float(path_matured[low_col].mean()), 2)
                 row["worst_mae_pct"] = round(float(path_matured[low_col].min()), 2)
                 row["best_mfe_pct"] = round(float(path_matured[high_col].max()), 2)
+            if not sequence_matured.empty:
+                trim_day = sequence_matured[f"trim{horizon}_touch_day"]
+                stop_day = sequence_matured[f"stop{horizon}_touch_day"]
+                row["trim_before_stop"] = int(sequence_matured[f"trim{horizon}_before_stop"].sum())
+                row["stop_before_trim"] = int(sequence_matured[f"stop{horizon}_before_trim"].sum())
+                row["same_day_stop_trim"] = int(sequence_matured[f"same_day{horizon}_stop_trim"].sum())
+                row["stop_touch_recovered"] = int(sequence_matured[f"stop{horizon}_recovered_by_close"].sum())
+                row["trim_touch_failed"] = int(sequence_matured[f"trim{horizon}_failed_by_close"].sum())
+                trim_hits = trim_day[trim_day > 0]
+                stop_hits = stop_day[stop_day > 0]
+                row["avg_days_to_trim"] = round(float(trim_hits.mean()), 2) if len(trim_hits) else None
+                row["avg_days_to_stop"] = round(float(stop_hits.mean()), 2) if len(stop_hits) else None
             checkpoint_rows.append(row)
 
     band_coverage = pd.DataFrame(coverage_rows)
@@ -797,7 +831,63 @@ def summarize_atr_band_checkpoints(alert_tracking: pd.DataFrame) -> dict[str, pd
             numerator = pd.to_numeric(band_checkpoints[col], errors="coerce")
             rate = ((numerator / denom.where(denom != 0)) * 100).round(1)
             band_checkpoints[f"{col}_rate_pct"] = rate.where(denom > 0, 0.0)
-    return {"band_coverage": band_coverage, "band_checkpoints": band_checkpoints}
+        for col in ["trim_before_stop", "stop_before_trim", "same_day_stop_trim"]:
+            denom = pd.to_numeric(band_checkpoints.get("sequence_n"), errors="coerce")
+            numerator = pd.to_numeric(band_checkpoints[col], errors="coerce")
+            rate = ((numerator / denom.where(denom != 0)) * 100).round(1)
+            band_checkpoints[f"{col}_rate_pct"] = rate.where(denom > 0, 0.0)
+        stop_touch_count = (
+            band_checkpoints["stop_before_trim"]
+            + band_checkpoints["same_day_stop_trim"]
+            + (band_checkpoints["touched_below_stop"] - band_checkpoints["stop_before_trim"] - band_checkpoints["same_day_stop_trim"]).clip(lower=0)
+        )
+        trim_touch_count = (
+            band_checkpoints["trim_before_stop"]
+            + band_checkpoints["same_day_stop_trim"]
+            + (band_checkpoints["touched_above_trim"] - band_checkpoints["trim_before_stop"] - band_checkpoints["same_day_stop_trim"]).clip(lower=0)
+        )
+        for col, denom in [
+            ("stop_touch_recovered", stop_touch_count),
+            ("trim_touch_failed", trim_touch_count),
+        ]:
+            numerator = pd.to_numeric(band_checkpoints[col], errors="coerce")
+            denom = pd.to_numeric(denom, errors="coerce")
+            rate = ((numerator / denom.where(denom != 0)) * 100).round(1)
+            band_checkpoints[f"{col}_rate_pct"] = rate.where(denom > 0, 0.0)
+
+    sequencing_cols = [
+        "horizon_days",
+        "watch_type",
+        "sequence_n",
+        "trim_before_stop",
+        "stop_before_trim",
+        "same_day_stop_trim",
+        "stop_touch_recovered",
+        "trim_touch_failed",
+        "avg_days_to_trim",
+        "avg_days_to_stop",
+        "trim_before_stop_rate_pct",
+        "stop_before_trim_rate_pct",
+        "same_day_stop_trim_rate_pct",
+        "stop_touch_recovered_rate_pct",
+        "trim_touch_failed_rate_pct",
+        "touched_above_trim_rate_pct",
+        "touched_below_stop_rate_pct",
+        "avg_mfe_pct",
+        "avg_mae_pct",
+        "worst_mae_pct",
+    ]
+    if band_checkpoints.empty:
+        path_risk_sequencing = pd.DataFrame()
+    else:
+        path_risk_sequencing = band_checkpoints[
+            [col for col in sequencing_cols if col in band_checkpoints.columns]
+        ].copy()
+    return {
+        "band_coverage": band_coverage,
+        "band_checkpoints": band_checkpoints,
+        "path_risk_sequencing": path_risk_sequencing,
+    }
 
 
 def build_atr_band_findings(band_parts: dict[str, pd.DataFrame]) -> list[str]:
