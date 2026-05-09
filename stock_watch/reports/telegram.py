@@ -439,7 +439,8 @@ def new_watchlist_spotlight_lines(
     lines = ["🆕 新加入追蹤觀察", "定位：先分角色，不等於主推。"]
     for _, row in fresh.iterrows():
         watch_type = "short" if str(row.get("layer", "")) == "short_attack" else "midlong"
-        action = messages.display_action_label(short_term_action_label(row) if watch_type == "short" else midlong_action_label(row))
+        raw_action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
+        action = messages.display_action_label(raw_action, row, watch_type=watch_type)
         lines.append(
             f"• {messages.format_ticker_name(row)}｜{messages.layer_label(str(row.get('layer', '')))}\n"
             f"  初步看法：{action}｜{messages.volatility_badge_text(row)}\n"

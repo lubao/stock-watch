@@ -1879,7 +1879,9 @@ class PushMessageTests(unittest.TestCase):
         self.assertIn("買", short_message)
         self.assertIn("賣", short_message)
         self.assertIn("逃", short_message)
-        self.assertTrue(any(label in short_message for label in ["等便宜買", "太熱別追", "先觀察", "漲多先等"]))
+        self.assertIn("可等買點", short_message)
+        self.assertIn("操作：正常回檔候選：等支撐確認後再試", short_message)
+        self.assertTrue(any(label in short_message for label in ["可等買點", "可小試", "暫不買", "只觀察"]))
 
         self.assertIn("中長線可布局", midlong_message)
         self.assertIn("今天中長線策略", midlong_message)

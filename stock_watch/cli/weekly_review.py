@@ -11,6 +11,9 @@ from stock_watch.paths import REPO_ROOT
 from stock_watch.paths import THEME_OUTDIR
 from stock_watch.paths import VERIFICATION_OUTDIR
 from stock_watch.runtime import ALERT_TRACK_CSV, LOCAL_TZ
+from stock_watch.strategy.pullback import classify_short_pullback_quality
+from stock_watch.strategy.pullback import pullback_action_for_quality
+from stock_watch.strategy.pullback import pullback_guidance_for_quality
 from verification.reports.summarize_outcomes import summarize_atr_band_checkpoints
 from verification.reports.summarize_outcomes import summarize_outcomes
 
@@ -882,34 +885,6 @@ def build_research_diagnostics(
     }
 
 
-def classify_short_pullback_quality(row: pd.Series) -> str:
-    if str(row.get("watch_type", "")) != "short" or str(row.get("action", "")) != "等拉回":
-        return ""
-
-    risk_score = pd.to_numeric(row.get("risk_score"), errors="coerce")
-    spec_score = pd.to_numeric(row.get("spec_risk_score"), errors="coerce")
-    ret5 = pd.to_numeric(row.get("ret5_pct"), errors="coerce")
-    ret20 = pd.to_numeric(row.get("ret20_pct"), errors="coerce")
-    volume_ratio = pd.to_numeric(row.get("volume_ratio20"), errors="coerce")
-    signals = {part.strip().upper() for part in str(row.get("signals", "")).split(",") if part.strip()}
-    spec_label = str(row.get("spec_risk_label", "") or "")
-    market_heat = str(row.get("market_heat", "") or "")
-
-    risk_value = float(risk_score) if not pd.isna(risk_score) else 0.0
-    spec_value = float(spec_score) if not pd.isna(spec_score) else 0.0
-    ret5_value = float(ret5) if not pd.isna(ret5) else 0.0
-    ret20_value = float(ret20) if not pd.isna(ret20) else 0.0
-    volume_value = float(volume_ratio) if not pd.isna(volume_ratio) else 1.0
-
-    if spec_label == "疑似炒作風險高" or spec_value >= 6 or risk_value >= 5 or ret5_value >= 15 or ret20_value >= 30:
-        return "高風險拉回"
-    if volume_value < 0.9 or ret20_value <= 0 or not (signals & {"TREND", "ACCEL", "REBREAK"}):
-        return "弱承接/疑似破位"
-    if risk_value <= 3 and ret5_value >= 4 and ret20_value > 0 and market_heat != "hot":
-        return "健康拉回"
-    return "需確認拉回"
-
-
 def build_pullback_quality_diagnostics(outcomes: pd.DataFrame) -> pd.DataFrame:
     if outcomes.empty:
         return pd.DataFrame()
@@ -946,6 +921,8 @@ def build_pullback_quality_diagnostics(outcomes: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
         .sort_values(by=["horizon_days", "worst_ret", "n"], ascending=[True, True, False])
     )
+    grouped.insert(2, "action_guide", grouped["pullback_quality"].map(pullback_action_for_quality))
+    grouped.insert(3, "guidance", grouped["pullback_quality"].map(pullback_guidance_for_quality))
     return grouped
 
 

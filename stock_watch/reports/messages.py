@@ -5,6 +5,7 @@ from collections.abc import Callable
 import pandas as pd
 
 from stock_watch.signals.detect import volatility_label
+from stock_watch.strategy import pullback
 
 
 def layer_label(layer: str) -> str:
@@ -147,7 +148,8 @@ def compact_summary_line(
     short_term_action_label: Callable[[pd.Series], str],
     midlong_action_label: Callable[[pd.Series], str],
 ) -> str:
-    action = display_action_label(short_term_action_label(row) if watch_type == "short" else midlong_action_label(row))
+    raw_action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
+    action = display_action_label(raw_action, row, watch_type=watch_type)
     role = "短線" if watch_type == "short" else "中線"
     return f"• {format_ticker_name(row)}｜{role}｜{action}"
 
@@ -180,8 +182,10 @@ def volume_heat_text(row: pd.Series) -> str:
     return f"量能：比平常冷 {ratio_text} 倍"
 
 
-def display_action_label(action: object) -> str:
+def display_action_label(action: object, row: pd.Series | None = None, *, watch_type: str = "") -> str:
     text = str(action or "").strip()
+    if text == "等拉回" and watch_type == "short" and row is not None:
+        return pullback.pullback_action_label(row)
     replacements = {
         "等拉回": "等便宜買",
         "續抱": "繼續看好",
@@ -342,7 +346,8 @@ def candidate_card(
     midlong_action_label: Callable[[pd.Series], str],
     watch_price_plan_text: Callable[[pd.Series, str], str],
 ) -> str:
-    action = display_action_label(short_term_action_label(row) if watch_type == "short" else midlong_action_label(row))
+    raw_action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
+    action = display_action_label(raw_action, row, watch_type=watch_type)
     period_label = "5日" if watch_type == "short" else "20日"
     period_value = row["ret5_pct"] if watch_type == "short" else row["ret20_pct"]
     vol_text = volatility_badge_text(row)
@@ -350,10 +355,14 @@ def candidate_card(
     risk_part = f"｜{risk}" if risk and risk != "正常" else ""
     price_plan = watch_price_plan_text(row, watch_type)
     price_line = f"\n   價格：{price_plan}" if price_plan else ""
+    pullback_line = ""
+    if watch_type == "short" and str(raw_action) == "等拉回":
+        pullback_line = f"\n   操作：{pullback.pullback_guidance(row)}"
     return (
         f"{format_ticker_name(row)}｜{action}\n"
         f"   {period_label} {period_value}%｜{vol_text}{risk_part}\n"
         f"   走勢：{plain_regime_text(row.get('regime'))}｜{volume_heat_text(row)}"
+        f"{pullback_line}"
         f"{price_line}"
     )
 
@@ -366,14 +375,19 @@ def candidate_line(
     midlong_action_label: Callable[[pd.Series], str],
     watch_price_plan_text: Callable[[pd.Series, str], str],
 ) -> str:
-    action = display_action_label(short_term_action_label(row) if watch_type == "short" else midlong_action_label(row))
+    raw_action = short_term_action_label(row) if watch_type == "short" else midlong_action_label(row)
+    action = display_action_label(raw_action, row, watch_type=watch_type)
     period_label = "5日" if watch_type == "short" else "20日"
     period_value = row["ret5_pct"] if watch_type == "short" else row["ret20_pct"]
     vol_text = volatility_badge_text(row)
+    pullback_line = ""
+    if watch_type == "short" and str(raw_action) == "等拉回":
+        pullback_line = f"  操作：{pullback.pullback_guidance(row)}\n"
     return (
         f"{format_ticker_name(row)}｜{action}\n"
         f"  {period_label} {period_value}%｜{vol_text}\n"
         f"  走勢：{plain_regime_text(row.get('regime'))}｜{volume_heat_text(row)}\n"
+        f"{pullback_line}"
         f"  價格：{watch_price_plan_text(row, watch_type)}"
     )
 

@@ -393,6 +393,8 @@ class RunWeeklyReviewTests(unittest.TestCase):
 
         qualities = set(table["pullback_quality"].astype(str))
         self.assertEqual(qualities, {"健康拉回", "弱承接/疑似破位", "高風險拉回"})
+        self.assertEqual(set(table["action_guide"].astype(str)), {"可等買點", "暫不買", "可小試"})
+        self.assertTrue(table["guidance"].astype(str).str.contains("停損|支撐|量價").all())
         high_risk = table[table["pullback_quality"] == "高風險拉回"].iloc[0]
         self.assertEqual(high_risk["worst_ret"], -8.0)
 
