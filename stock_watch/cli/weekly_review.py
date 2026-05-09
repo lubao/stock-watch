@@ -1014,6 +1014,199 @@ def build_pullback_confirmation_diagnostics(outcomes: pd.DataFrame) -> pd.DataFr
     return grouped
 
 
+def _trade_sim_position_fraction(position_size: object) -> float:
+    text = str(position_size or "").strip()
+    if "0.25" in text:
+        return 0.25
+    if "0.5" in text:
+        return 0.5
+    if "1" in text and "0" not in text:
+        return 1.0
+    return 0.0
+
+
+def _shadow_trade_decision(pullback_quality: object, confirmation: object) -> tuple[str, str, str]:
+    quality_text = str(pullback_quality or "")
+    confirmation_text = str(confirmation or "")
+    if confirmation_text != "隔日轉強":
+        return "不進場", "0 倉", "隔日沒有轉強，shadow mode 不把它算成可進場。"
+    if quality_text == "高風險拉回":
+        return "可小試", "0.25 倉", "隔日轉強確認後才小倉，快停損、不攤平。"
+    if quality_text == "健康拉回":
+        return "可試單", "0.5 倉", "隔日轉強且拉回健康，可用正常試單倉位。"
+    if quality_text == "需確認拉回":
+        return "只觀察", "0 倉", "即使隔日轉強也先不升級，等待更多資料排除 tail risk。"
+    return "暫不買", "0 倉", "承接或結構不乾淨，等量價恢復後再重新分類。"
+
+
+def build_short_pullback_trade_simulation_shadow(outcomes: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "rule",
+        "confirmation",
+        "entry_assumption",
+        "mode",
+        "entry_decision",
+        "position_size",
+        "position_fraction",
+        "n",
+        "win_rate_5d_after_entry",
+        "avg_trade_ret_5d",
+        "avg_position_ret_5d",
+        "tail25_trade_ret_5d",
+        "worst_trade_ret_5d",
+        "best_trade_ret_5d",
+        "profit_factor",
+        "status",
+        "guidance",
+        "examples",
+    ]
+    if outcomes.empty:
+        return pd.DataFrame(columns=columns)
+    required = {"signal_date", "ticker", "watch_type", "action", "horizon_days", "realized_ret_pct", "status"}
+    if not required.issubset(set(outcomes.columns)):
+        return pd.DataFrame(columns=columns)
+
+    work = outcomes.copy()
+    work = work[
+        (work["status"].astype(str) == "ok")
+        & (work["watch_type"].astype(str) == "short")
+        & (work["action"].astype(str) == "等拉回")
+    ].copy()
+    if work.empty:
+        return pd.DataFrame(columns=columns)
+
+    work["_horizon"] = pd.to_numeric(work["horizon_days"], errors="coerce")
+    work["_ret"] = pd.to_numeric(work["realized_ret_pct"], errors="coerce")
+    work = work[work["_horizon"].isin([1, 5])].dropna(subset=["_ret"]).copy()
+    if work.empty:
+        return pd.DataFrame(columns=columns)
+
+    keys = ["signal_date", "ticker"]
+    base = work.sort_values(by=keys + ["_horizon"]).drop_duplicates(subset=keys, keep="first").copy()
+    base["rule"] = base.apply(classify_short_pullback_quality, axis=1)
+    paired_columns = keys + ["rule"]
+    if "name" in base.columns:
+        paired_columns.insert(2, "name")
+
+    ret1 = (
+        work[work["_horizon"] == 1]
+        .groupby(keys, dropna=False)["_ret"]
+        .first()
+        .rename("ret1_pct")
+        .reset_index()
+    )
+    ret5 = (
+        work[work["_horizon"] == 5]
+        .groupby(keys, dropna=False)["_ret"]
+        .first()
+        .rename("ret5_realized_pct")
+        .reset_index()
+    )
+    paired = base[paired_columns].merge(ret1, on=keys, how="inner").merge(ret5, on=keys, how="inner")
+    if paired.empty:
+        return pd.DataFrame(columns=columns)
+
+    paired["confirmation"] = paired["ret1_pct"].map(next_session_confirmation_bucket)
+    decisions = paired.apply(lambda row: _shadow_trade_decision(row["rule"], row["confirmation"]), axis=1)
+    paired["entry_decision"] = decisions.map(lambda item: item[0])
+    paired["position_size"] = decisions.map(lambda item: item[1])
+    paired["guidance"] = decisions.map(lambda item: item[2])
+    paired["position_fraction"] = paired["position_size"].map(_trade_sim_position_fraction)
+    valid_entry_base = 1 + (paired["ret1_pct"] / 100)
+    paired = paired[valid_entry_base > 0].copy()
+    if paired.empty:
+        return pd.DataFrame(columns=columns)
+
+    paired["_trade_ret"] = (((1 + (paired["ret5_realized_pct"] / 100)) / (1 + (paired["ret1_pct"] / 100))) - 1) * 100
+    paired["_position_ret"] = paired["_trade_ret"] * paired["position_fraction"]
+    paired["_win"] = paired["_trade_ret"] > 0
+    name_col = "name" if "name" in paired.columns else "ticker"
+
+    def _profit_factor(series: pd.Series) -> float:
+        gains = float(series[series > 0].sum())
+        losses = float(series[series < 0].sum())
+        if abs(losses) == 0:
+            return 999.0 if gains > 0 else 0.0
+        return round(gains / abs(losses), 2)
+
+    grouped = (
+        paired.groupby(
+            ["rule", "confirmation", "entry_decision", "position_size", "position_fraction", "guidance"],
+            dropna=False,
+        )
+        .agg(
+            n=("_trade_ret", "size"),
+            win_rate_5d_after_entry=("_win", lambda series: round(float(series.mean()) * 100, 1) if len(series) else 0.0),
+            avg_trade_ret_5d=("_trade_ret", lambda series: round(float(series.mean()), 2)),
+            avg_position_ret_5d=("_position_ret", lambda series: round(float(series.mean()), 2)),
+            tail25_trade_ret_5d=("_trade_ret", lambda series: round(float(series.quantile(0.25)), 2)),
+            worst_trade_ret_5d=("_trade_ret", lambda series: round(float(series.min()), 2)),
+            best_trade_ret_5d=("_trade_ret", lambda series: round(float(series.max()), 2)),
+            profit_factor=("_trade_ret", _profit_factor),
+            examples=(name_col, lambda series: "、".join(series.dropna().astype(str).head(3).tolist())),
+        )
+        .reset_index()
+    )
+    grouped.insert(2, "entry_assumption", "隔日確認收盤進")
+    grouped.insert(3, "mode", "shadow")
+
+    def _status(row: pd.Series) -> str:
+        if float(row.get("position_fraction", 0.0) or 0.0) <= 0:
+            return "blocked_no_entry"
+        if int(row.get("n", 0) or 0) < 5:
+            return "shadow_low_sample"
+        if float(row.get("worst_trade_ret_5d", 0.0) or 0.0) <= -8 or float(row.get("tail25_trade_ret_5d", 0.0) or 0.0) <= -4:
+            return "shadow_tail_risk"
+        if (
+            float(row.get("avg_trade_ret_5d", 0.0) or 0.0) > 0
+            and float(row.get("profit_factor", 0.0) or 0.0) >= 1.2
+            and float(row.get("win_rate_5d_after_entry", 0.0) or 0.0) >= 50
+        ):
+            return "shadow_candidate"
+        return "shadow_watch"
+
+    grouped["status"] = grouped.apply(_status, axis=1)
+    return grouped[columns].sort_values(
+        by=["position_fraction", "worst_trade_ret_5d", "n", "rule"],
+        ascending=[False, True, False, True],
+    )
+
+
+def build_trade_simulation_shadow_decision(trade_simulation: pd.DataFrame) -> dict[str, object]:
+    if trade_simulation.empty:
+        return {
+            "status": "shadow_only",
+            "detail": "`trade simulation` 已設定為事後分析；目前缺少可配對的 `1D/5D` 拉回樣本，不進 Telegram。",
+        }
+
+    work = trade_simulation.copy()
+    work["position_fraction"] = pd.to_numeric(work.get("position_fraction"), errors="coerce").fillna(0.0)
+    actionable = work[work["position_fraction"] > 0].copy()
+    if actionable.empty:
+        return {
+            "status": "shadow_only",
+            "detail": "`trade simulation` 目前沒有通過進場閘門的樣本；維持事後分析，不進 Telegram。",
+        }
+
+    actionable = actionable.sort_values(
+        by=["position_fraction", "worst_trade_ret_5d", "n"],
+        ascending=[False, True, False],
+    )
+    top_row = actionable.iloc[0]
+    return {
+        "status": "shadow_only",
+        "detail": (
+            "`trade simulation` 採 `隔日確認收盤進`，目前只進 weekly/research shadow mode，不進 Telegram。"
+            f" 代表規則 `{top_row.get('rule', '')} + {top_row.get('confirmation', '')}`："
+            f"`n={int(top_row.get('n', 0))}`、"
+            f"`avg_trade={float(top_row.get('avg_trade_ret_5d', 0.0)):.2f}%`、"
+            f"`avg_position={float(top_row.get('avg_position_ret_5d', 0.0)):.2f}%`、"
+            f"`worst={float(top_row.get('worst_trade_ret_5d', 0.0)):.2f}%`、"
+            f"`status={top_row.get('status', '')}`。"
+        ),
+    }
+
+
 def build_pullback_rule_recommendations(confirmation: pd.DataFrame) -> pd.DataFrame:
     columns = ["rule", "condition", "status", "action_guide", "position_size", "evidence", "note"]
     if confirmation.empty:
@@ -1546,6 +1739,9 @@ def build_weekly_review_payload(
     full_pullback_quality = build_pullback_quality_diagnostics(outcomes)
     recent_pullback_confirmation = build_pullback_confirmation_diagnostics(recent_outcomes)
     full_pullback_confirmation = build_pullback_confirmation_diagnostics(outcomes)
+    recent_trade_simulation_shadow = build_short_pullback_trade_simulation_shadow(recent_outcomes)
+    full_trade_simulation_shadow = build_short_pullback_trade_simulation_shadow(outcomes)
+    decisions["trade_simulation"] = build_trade_simulation_shadow_decision(full_trade_simulation_shadow)
     pullback_rule_recommendations = build_pullback_rule_recommendations(full_pullback_confirmation)
     pullback_exit_guard_recommendations = build_pullback_exit_guard_recommendations(full_pullback_confirmation)
 
@@ -1604,6 +1800,8 @@ def build_weekly_review_payload(
             "full_short_pullback_quality": full_pullback_quality.to_dict(orient="records"),
             "recent_short_pullback_confirmation": recent_pullback_confirmation.to_dict(orient="records"),
             "full_short_pullback_confirmation": full_pullback_confirmation.to_dict(orient="records"),
+            "recent_short_pullback_trade_simulation_shadow": recent_trade_simulation_shadow.to_dict(orient="records"),
+            "full_short_pullback_trade_simulation_shadow": full_trade_simulation_shadow.to_dict(orient="records"),
             "short_pullback_rule_recommendations": pullback_rule_recommendations.to_dict(orient="records"),
             "short_pullback_exit_guard_recommendations": pullback_exit_guard_recommendations.to_dict(orient="records"),
             "current_rank_spec_risk_by_group": rank_spec_coverage["by_group"],
@@ -1649,7 +1847,7 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
         "## Decisions",
         "",
     ]
-    for key in ["threshold", "short_gate", "atr", "feedback", "spec_risk"]:
+    for key in ["threshold", "short_gate", "atr", "feedback", "spec_risk", "trade_simulation"]:
         item = decisions.get(key, {})
         lines.append(f"- `{key}`: `{item.get('status', 'hold')}` — {item.get('detail', '')}")
 
@@ -1780,6 +1978,8 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     lines.extend(["## Full Short Pullback Quality", _table_markdown(pd.DataFrame(tables.get("full_short_pullback_quality", []))).rstrip(), ""])
     lines.extend(["## Recent Short Pullback Confirmation", _table_markdown(pd.DataFrame(tables.get("recent_short_pullback_confirmation", []))).rstrip(), ""])
     lines.extend(["## Full Short Pullback Confirmation", _table_markdown(pd.DataFrame(tables.get("full_short_pullback_confirmation", []))).rstrip(), ""])
+    lines.extend(["## Recent Short Pullback Trade Simulation Shadow", _table_markdown(pd.DataFrame(tables.get("recent_short_pullback_trade_simulation_shadow", []))).rstrip(), ""])
+    lines.extend(["## Full Short Pullback Trade Simulation Shadow", _table_markdown(pd.DataFrame(tables.get("full_short_pullback_trade_simulation_shadow", []))).rstrip(), ""])
     lines.extend(["## Short Pullback Rule Recommendations", _table_markdown(pd.DataFrame(tables.get("short_pullback_rule_recommendations", []))).rstrip(), ""])
     lines.extend(["## Short Pullback Exit Guard Recommendations", _table_markdown(pd.DataFrame(tables.get("short_pullback_exit_guard_recommendations", []))).rstrip(), ""])
     if isinstance(data_quality_gate, dict):

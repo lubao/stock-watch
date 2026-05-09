@@ -22,13 +22,11 @@
 - forward low/high path tracking。
 - ATR Band Checkpoints with touched stop/trim + MFE/MAE。
 - 投資模式與交易模式的初步分離概念。
+- Sprint A/B/C/D MVP：path sequencing、factor tear sheet、portfolio risk panel、trade simulation shadow mode。
 
 但還缺：
 
-- 完整碰線順序：先停利還是先停損。
-- factor tear sheet：哪些分數真的有預測力。
-- portfolio-level risk panel：持倉整體風險與回撤。
-- trade-level simulation：entry / sizing / exit / P&L。
+- 更完整的 trade-level simulation：open entry、buy-zone entry、touched-stop vs close-stop。
 - decision panel：哪些規則 ready、哪些只觀察、哪些 blocked。
 
 ## Phase 1: Path Risk 第二層
@@ -196,8 +194,10 @@
 
 ### Sprint D: Trade Simulation MVP
 
-- Implement only one strategy first: `高風險拉回 + 隔日轉強 + 0.25 倉`.
-- Compare touched-stop vs close-stop.
+- Use `隔日確認收盤進` as the first entry assumption.
+- Keep it in weekly/research `shadow mode`; do not send Telegram buy prompts.
+- Implement first strategy: `高風險拉回 + 隔日轉強 + 0.25 倉`.
+- Defer `隔日開盤進`、`回到買價帶才進`、touched-stop vs close-stop to sensitivity comparisons.
 
 ### Sprint E: Weekly Decision Panel
 
@@ -214,10 +214,11 @@
 
 ## Next Immediate Step
 
-Start Sprint A.
+Start Sprint E after the trade simulation shadow table stabilizes.
 
-Build `Path Risk Sequencing` so weekly review can answer:
+Build a weekly decision panel so the review can answer:
 
-- 先碰停利還是先碰停損？
-- 碰停損後是否常常收回？
-- 盤中碰線提醒是否比收盤規則更合理？
+- 哪些規則仍只該 shadow？
+- 哪些規則只是 sample 太少？
+- 哪些規則被 tail risk 擋住？
+- 哪些規則真的需要人工決策？

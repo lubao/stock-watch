@@ -22,6 +22,7 @@ from stock_watch.cli.weekly_review import build_pullback_confirmation_diagnostic
 from stock_watch.cli.weekly_review import build_pullback_exit_guard_recommendations
 from stock_watch.cli.weekly_review import build_pullback_quality_diagnostics
 from stock_watch.cli.weekly_review import build_pullback_rule_recommendations
+from stock_watch.cli.weekly_review import build_short_pullback_trade_simulation_shadow
 from stock_watch.cli.weekly_review import build_spec_risk_overview
 from stock_watch.cli.weekly_review import build_weekly_review_payload
 from stock_watch.cli.weekly_review import filter_recent_signal_dates
@@ -445,6 +446,42 @@ class RunWeeklyReviewTests(unittest.TestCase):
         failed = table[(table["pullback_quality"] == "需確認拉回") & (table["confirmation"] == "隔日失守")].iloc[0]
         self.assertEqual(failed["worst_5d"], -8.0)
 
+    def test_build_short_pullback_trade_simulation_shadow_uses_confirm_close_entry(self) -> None:
+        base = {
+            "watch_type": "short",
+            "action": "等拉回",
+            "status": "ok",
+            "risk_score": 2,
+            "spec_risk_score": 0,
+            "spec_risk_label": "正常",
+            "ret20_pct": 12.0,
+            "volume_ratio20": 1.2,
+            "signals": "TREND,ACCEL",
+            "market_heat": "warm",
+        }
+        rows = [
+            {**base, "signal_date": "2026-04-01", "ticker": "AAA.TW", "name": "Alpha", "horizon_days": 1, "ret5_pct": 16.0, "ret20_pct": 35.0, "market_heat": "hot", "realized_ret_pct": 1.2},
+            {**base, "signal_date": "2026-04-01", "ticker": "AAA.TW", "name": "Alpha", "horizon_days": 5, "ret5_pct": 16.0, "ret20_pct": 35.0, "market_heat": "hot", "realized_ret_pct": 5.0},
+            {**base, "signal_date": "2026-04-02", "ticker": "BBB.TW", "name": "Beta", "horizon_days": 1, "risk_score": 4, "ret5_pct": 3.0, "realized_ret_pct": 1.4},
+            {**base, "signal_date": "2026-04-02", "ticker": "BBB.TW", "name": "Beta", "horizon_days": 5, "risk_score": 4, "ret5_pct": 3.0, "realized_ret_pct": -10.0},
+            {**base, "signal_date": "2026-04-03", "ticker": "CCC.TW", "name": "Gamma", "horizon_days": 1, "ret5_pct": 16.0, "ret20_pct": 35.0, "market_heat": "hot", "realized_ret_pct": -0.5},
+            {**base, "signal_date": "2026-04-03", "ticker": "CCC.TW", "name": "Gamma", "horizon_days": 5, "ret5_pct": 16.0, "ret20_pct": 35.0, "market_heat": "hot", "realized_ret_pct": -4.0},
+        ]
+
+        table = build_short_pullback_trade_simulation_shadow(pd.DataFrame(rows))
+
+        high_risk_confirmed = table[(table["rule"] == "高風險拉回") & (table["confirmation"] == "隔日轉強")].iloc[0]
+        confirm_pullback = table[(table["rule"] == "需確認拉回") & (table["confirmation"] == "隔日轉強")].iloc[0]
+        high_risk_unconfirmed = table[(table["rule"] == "高風險拉回") & (table["confirmation"] == "隔日小跌")].iloc[0]
+        self.assertEqual(high_risk_confirmed["entry_assumption"], "隔日確認收盤進")
+        self.assertEqual(high_risk_confirmed["mode"], "shadow")
+        self.assertEqual(high_risk_confirmed["position_size"], "0.25 倉")
+        self.assertEqual(high_risk_confirmed["status"], "shadow_low_sample")
+        self.assertEqual(high_risk_confirmed["avg_trade_ret_5d"], 3.75)
+        self.assertEqual(high_risk_confirmed["avg_position_ret_5d"], 0.94)
+        self.assertEqual(confirm_pullback["status"], "blocked_no_entry")
+        self.assertEqual(high_risk_unconfirmed["position_size"], "0 倉")
+
     def test_build_pullback_rule_recommendations_blocks_tail_risk_upgrades(self) -> None:
         confirmation = pd.DataFrame(
             [
@@ -862,6 +899,10 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertTrue(payload["tables"]["recent_short_pullback_quality"])
         self.assertIn("## Full Short Pullback Confirmation", markdown)
         self.assertIn("full_short_pullback_confirmation", payload["tables"])
+        self.assertIn("## Recent Short Pullback Trade Simulation Shadow", markdown)
+        self.assertIn("recent_short_pullback_trade_simulation_shadow", payload["tables"])
+        self.assertIn("## Full Short Pullback Trade Simulation Shadow", markdown)
+        self.assertIn("full_short_pullback_trade_simulation_shadow", payload["tables"])
         self.assertIn("## Short Pullback Rule Recommendations", markdown)
         self.assertIn("short_pullback_rule_recommendations", payload["tables"])
         self.assertIn("## Short Pullback Exit Guard Recommendations", markdown)
@@ -879,4 +920,6 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("3057.TW", markdown)
         self.assertIn("spec_risk", payload["decisions"])
         self.assertIn("short_gate", payload["decisions"])
+        self.assertIn("trade_simulation", payload["decisions"])
+        self.assertIn("`trade_simulation`", markdown)
         self.assertIn("short_gate_tuning_draft", payload["summary"])
