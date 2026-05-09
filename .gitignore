@@ -210,6 +210,7 @@ local_api_key
 runs/theme_watchlist_daily/**
 !runs/theme_watchlist_daily/
 !runs/theme_watchlist_daily/README.md
+runs/artifact_backups/
 runs/verification/watchlist_daily/
 
 # Cursor

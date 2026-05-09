@@ -4,6 +4,7 @@ import argparse
 import sys
 from types import ModuleType
 
+from stock_watch.cli import artifact_backup
 from stock_watch.cli import local_daily
 from stock_watch.cli import local_doctor
 from stock_watch.cli import local_housekeeping
@@ -20,6 +21,7 @@ from verification.cli import verify_recommendations
 
 
 COMMANDS: dict[str, tuple[str, ModuleType]] = {
+    "backup-artifacts": ("Create a local backup zip of generated run artifacts.", artifact_backup),
     "daily": ("Run the daily local workflow.", local_daily),
     "doctor": ("Check local environment readiness.", local_doctor),
     "housekeeping": ("Clean or inspect generated local artifacts.", local_housekeeping),

@@ -63,6 +63,8 @@
 - `$VENV_PY -m stock_watch daily --mode portfolio --no-sync-watchlist-report`
 - `$VENV_PY -m stock_watch weekly`
 - `$VENV_PY -m stock_watch weekly --max-signal-dates 5`
+- `$VENV_PY -m stock_watch backup-artifacts`
+- `$VENV_PY -m stock_watch backup-artifacts --dry-run`
 - `$VENV_PY -m stock_watch housekeeping`
 - `$VENV_PY -m stock_watch housekeeping --apply`
 - `$VENV_PY -m stock_watch website`
@@ -122,6 +124,8 @@ Verification 子命令：
 ## 重要輸出
 
 `runs/theme_watchlist_daily/` 與 `runs/verification/watchlist_daily/` 是本機產物目錄，預設不納入 git；這些檔案由 workflow 重建或持續累積。若需要保存某次結果，請另外做明確的 artifact snapshot commit，例如 `git add -f runs/theme_watchlist_daily/daily_rank.csv runs/theme_watchlist_daily/alert_tracking.csv`。
+
+在執行任何會清理本機產物的操作前，建議先跑 `$VENV_PY -m stock_watch backup-artifacts`；預設會備份重要報告與 CSV 到 `runs/artifact_backups/`，但不包含 cache/log。若只想檢查會備份哪些檔案，先跑 `$VENV_PY -m stock_watch backup-artifacts --dry-run`。
 
 Watchlist：
 
