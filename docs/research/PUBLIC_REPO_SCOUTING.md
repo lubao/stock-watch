@@ -89,3 +89,5 @@ Current local priority:
 3. Separate investment-mode Telegram guidance from trading-mode portfolio decisions.
 
 See `docs/research/NEXT_RESEARCH_TARGETS_2026_05_09.md` for the active research plan.
+
+The implementation roadmap is tracked in `docs/research/ROADMAP_FROM_REPO_REVIEW_2026_05_09.md`.
