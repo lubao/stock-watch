@@ -204,17 +204,12 @@ chat_ids
 chat_id_map.csv
 telegram_getupdates_url
 local_api_key
-runs/theme_watchlist_daily/portfolio_report.md
-runs/theme_watchlist_daily/portfolio_report.html
-runs/theme_watchlist_daily/portfolio_runtime_metrics.md
-runs/theme_watchlist_daily/portfolio_runtime_metrics.json
-runs/theme_watchlist_daily/local_*.md
-runs/theme_watchlist_daily/local_*.json
-runs/theme_watchlist_daily/local_site/
-runs/theme_watchlist_daily/weekly_review.md
-runs/theme_watchlist_daily/weekly_review.json
-runs/theme_watchlist_daily/history_cache/
-runs/theme_watchlist_daily/.yfinance_cache/
+
+# Generated stock-watch run artifacts are local-only by default.
+# Use `git add -f runs/theme_watchlist_daily/<file>` only for an explicit artifact snapshot.
+runs/theme_watchlist_daily/**
+!runs/theme_watchlist_daily/
+!runs/theme_watchlist_daily/README.md
 runs/verification/watchlist_daily/
 
 # Cursor

@@ -1,1 +1,0 @@
-{"date": "2026-05-08", "signature": "6ab22700f54bc477", "scopes": {"postclose": {"date": "2026-05-08", "signature": "6ab22700f54bc477"}, "preopen": {"date": "2026-05-08", "signature": "20cc948a19168f77"}, "full": {"date": "2026-05-07", "signature": "20cc948a19168f77"}}}

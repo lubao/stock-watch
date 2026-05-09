@@ -121,6 +121,8 @@ Verification 子命令：
 
 ## 重要輸出
 
+`runs/theme_watchlist_daily/` 與 `runs/verification/watchlist_daily/` 是本機產物目錄，預設不納入 git；這些檔案由 workflow 重建或持續累積。若需要保存某次結果，請另外做明確的 artifact snapshot commit，例如 `git add -f runs/theme_watchlist_daily/daily_rank.csv runs/theme_watchlist_daily/alert_tracking.csv`。
+
 Watchlist：
 
 - `runs/theme_watchlist_daily/daily_report.md`
