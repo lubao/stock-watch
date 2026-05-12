@@ -80,6 +80,7 @@ class RunLocalDailyTests(unittest.TestCase):
         message = build_action_summary_notification(
             {
                 "market_context_lines": ["盤勢：高檔震盪盤｜邊做邊收", "重點：進場要更挑買點"],
+                "lucky_pick_lines": ["星期三幸運籤抽到 台積電 (2330.TW)：一眼不看，心態自來。"],
                 "action_trial_tickers": ["6161.TWO 捷波"],
                 "action_pullback_tickers": ["3515.TW 華擎", "3213.TWO 茂訊 可試單"],
                 "action_midlong_tickers": ["3014.TW 聯陽 中長線 續抱"],
@@ -92,6 +93,8 @@ class RunLocalDailyTests(unittest.TestCase):
         )
 
         self.assertIn("📌 今日動作摘要", message)
+        self.assertEqual(message.splitlines()[1], "星期三幸運籤抽到 台積電 (2330.TW)：一眼不看，心態自來。")
+        self.assertNotIn("小彩蛋：", message)
         self.assertIn("盤勢：高檔震盪盤｜邊做邊收", message)
         self.assertIn("重點：進場要更挑買點", message)
         self.assertIn("🟢 今天可小買：(小買試水溫，不重壓)\n• 捷波 (6161.TWO)", message)
@@ -111,6 +114,7 @@ class RunLocalDailyTests(unittest.TestCase):
         message = build_simple_action_summary_notification(
             {
                 "market_context_simple_lines": ["盤勢：高檔震盪盤｜邊做邊收", "重點：進場要更挑買點"],
+                "lucky_pick_lines": ["星期三雷達嗶到 台積電 (2330.TW)：不是叫你衝，是叫你假裝很懂地觀察。"],
                 "action_trial_tickers": [
                     "6161.TWO 捷波｜買區 42.92–44｜停損 40.85",
                     "4995.TWO 晶達｜買區 44.41–45.5｜停損 42.26",
@@ -127,6 +131,7 @@ class RunLocalDailyTests(unittest.TestCase):
         )
 
         self.assertIn("📌 今日可行動名單", message)
+        self.assertEqual(message.splitlines()[1], "星期三雷達嗶到 台積電 (2330.TW)：不是叫你衝，是叫你假裝很懂地觀察。")
         self.assertIn("盤勢：高檔震盪盤｜邊做邊收", message)
         self.assertIn("🟢 今天可小買：(小買試水溫，不重壓)\n• 捷波 (6161.TWO)｜買 42.92–44｜逃 40.85", message)
         self.assertIn("• 富鼎 (8261.TW)｜買 120.72–128｜逃 110.21", message)
@@ -713,9 +718,41 @@ class RunLocalDailyTests(unittest.TestCase):
 
         self.assertIn("星期三", line)
         self.assertIn("台積電 (2330.TW)", line)
-        self.assertIn("小彩蛋：", line)
+        self.assertNotIn("小彩蛋：", line)
         self.assertNotIn("趨勢還站得住", line)
         self.assertNotIn("過熱股", line)
+
+    def test_build_lucky_pick_line_uses_rng_each_call(self) -> None:
+        df = pd.DataFrame(
+            [
+                {
+                    "date": "2026-05-13",
+                    "ticker": f"23{i:02d}.TW",
+                    "name": f"測試股{i}",
+                    "grade": "A",
+                    "setup_score": 8,
+                    "risk_score": 1,
+                    "signals": "TREND",
+                    "spec_risk_label": "正常",
+                    "rank": i,
+                }
+                for i in range(20)
+            ]
+        )
+
+        class FakeRng:
+            def __init__(self, values: list[int]) -> None:
+                self.values = list(values)
+
+            def randrange(self, stop: int) -> int:
+                return self.values.pop(0) % stop
+
+        first = _build_lucky_pick_line(df, rng=FakeRng([0, 0]))
+        repeated = _build_lucky_pick_line(df, rng=FakeRng([0, 0]))
+        second = _build_lucky_pick_line(df, rng=FakeRng([1, 1]))
+
+        self.assertEqual(first, repeated)
+        self.assertNotEqual(first, second)
 
     def test_lucky_pick_tagline_pool_has_enough_safe_variants(self) -> None:
         self.assertGreaterEqual(len(LUCKY_PICK_TAGLINES), 10)

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
+import random
 import re
 import sys
 from datetime import datetime
@@ -375,6 +375,9 @@ def send_quality_value_notification(
         import daily_theme_watchlist
 
         watchlist_summary: dict[str, list[str]] = {}
+        daily_rank = pd.DataFrame()
+        market_regime: dict = {}
+        us_market: dict = {}
         try:
             daily_rank = _load_csv_safely(entry_plan_csv.parent / "daily_rank.csv")
             if not daily_rank.empty:
@@ -386,7 +389,6 @@ def send_quality_value_notification(
                     us_market,
                     daily_module=daily_theme_watchlist,
                 )
-                watchlist_summary.update(_collect_market_context_summary(daily_rank, market_regime, us_market))
         except Exception:
             watchlist_summary = {}
         metrics = _merge_action_summary_metrics(metrics, watchlist_summary)
@@ -394,14 +396,34 @@ def send_quality_value_notification(
             return
         full_chat_ids = list(getattr(daily_theme_watchlist, "TELEGRAM_CHAT_IDS", []) or [])
         simple_chat_ids = list(getattr(daily_theme_watchlist, "TELEGRAM_SIMPLE_CHAT_IDS", []) or [])
-        if full_chat_ids:
-            message = build_action_summary_notification(metrics)
-            daily_theme_watchlist.send_telegram_message(message, chat_ids=full_chat_ids)
-        if simple_chat_ids:
-            message = build_simple_action_summary_notification(metrics)
-            daily_theme_watchlist.send_telegram_message(message, chat_ids=simple_chat_ids)
+        for chat_id in full_chat_ids:
+            message_metrics = _metrics_with_lucky_pick(metrics, daily_rank, market_regime, us_market)
+            message = build_action_summary_notification(message_metrics)
+            daily_theme_watchlist.send_telegram_message(message, chat_ids=[chat_id])
+        for chat_id in simple_chat_ids:
+            message_metrics = _metrics_with_lucky_pick(metrics, daily_rank, market_regime, us_market)
+            message = build_simple_action_summary_notification(message_metrics)
+            daily_theme_watchlist.send_telegram_message(message, chat_ids=[chat_id])
     except Exception:
         return
+
+
+def _metrics_with_lucky_pick(
+    metrics: dict[str, object],
+    daily_rank: pd.DataFrame,
+    market_regime: dict,
+    us_market: dict,
+) -> dict[str, object]:
+    if daily_rank.empty:
+        return dict(metrics)
+    return _merge_action_summary_metrics(
+        metrics,
+        _collect_market_context_summary(
+            daily_rank,
+            market_regime,
+            us_market,
+        ),
+    )
 
 
 def build_simple_action_summary_notification(metrics: dict[str, object]) -> str:
@@ -470,13 +492,24 @@ def build_action_summary_notification(metrics: dict[str, object]) -> str:
 
 def _action_summary_header_lines(metrics: dict[str, object], *, simple: bool) -> list[str]:
     key = "market_context_simple_lines" if simple else "market_context_lines"
-    values = metrics.get(key, [])
-    if not isinstance(values, list):
-        return []
-    lines = [str(value).strip() for value in values if str(value).strip()]
+    context_values = metrics.get(key, [])
+    lucky_values = metrics.get("lucky_pick_lines", [])
+    if not isinstance(context_values, list):
+        context_values = []
+    if not isinstance(lucky_values, list):
+        lucky_values = []
+    lucky_lines = [str(value).strip() for value in lucky_values if str(value).strip()]
+    context_lines = [str(value).strip() for value in context_values if str(value).strip()]
+    lines: list[str] = []
+    if lucky_lines:
+        lines.extend(lucky_lines)
+    if context_lines:
+        if lines:
+            lines.append("")
+        lines.extend(context_lines)
     if not lines:
         return []
-    return ["", *lines]
+    return lines
 
 
 def _merge_action_summary_metrics(*summaries: dict[str, object]) -> dict[str, object]:
@@ -1561,6 +1594,8 @@ def _collect_market_context_summary(
     df_rank: pd.DataFrame,
     market_regime: dict,
     us_market: dict,
+    *,
+    rng: random.Random | None = None,
 ) -> dict[str, list[str]]:
     scenario = strategy_scenario.build_market_scenario(market_regime, us_market, df_rank)
     market_comment = _compact_summary_text(str(market_regime.get("comment", "") or ""), limit=78)
@@ -1569,22 +1604,21 @@ def _collect_market_context_summary(
     stance = str(scenario.get("stance", "") or "")
     focus = _compact_summary_text(str(scenario.get("focus", "") or ""), limit=78)
     exit_note = _compact_summary_text(str(scenario.get("exit_note", "") or ""), limit=78)
-    lucky_pick = _build_lucky_pick_line(df_rank)
+    lucky_pick = _build_lucky_pick_line(df_rank, rng=rng)
     lines = [
         f"盤勢：{label}｜{stance}" if label or stance else "",
         f"台股：{market_comment}" if market_comment else "",
         f"美股：{us_summary}" if us_summary else "",
         f"重點：{focus}" if focus else "",
         f"出場：{exit_note}" if exit_note else "",
-        lucky_pick,
     ]
     simple_lines = [
         f"盤勢：{_plain_market_scenario_label(label, stance)}",
         f"外部：{_plain_us_market_bias(us_summary)}",
         f"重點：{_plain_market_focus(label, focus)}",
-        lucky_pick,
     ]
     return {
+        "lucky_pick_lines": [lucky_pick] if lucky_pick else [],
         "market_context_lines": [line for line in lines if line],
         "market_context_simple_lines": [line for line in simple_lines if line],
     }
@@ -1597,7 +1631,7 @@ def _compact_summary_text(text: str, *, limit: int) -> str:
     return compact[: max(limit - 1, 0)].rstrip() + "…"
 
 
-def _build_lucky_pick_line(df_rank: pd.DataFrame) -> str:
+def _build_lucky_pick_line(df_rank: pd.DataFrame, *, rng: random.Random | None = None) -> str:
     if df_rank.empty or "ticker" not in df_rank.columns:
         return ""
     work = df_rank.copy()
@@ -1623,23 +1657,21 @@ def _build_lucky_pick_line(df_rank: pd.DataFrame) -> str:
         pool = pool.sort_values(by=["rank"], ascending=[True])
     pool = pool.head(20).reset_index(drop=True)
     signal_date = _lucky_pick_signal_date(pool)
-    tickers = "|".join(pool["ticker"].fillna("").astype(str).tolist())
-    digest = hashlib.sha256(f"{signal_date}|{tickers}".encode("utf-8")).hexdigest()
-    index = int(digest[:8], 16) % len(pool)
+    lucky_rng = rng or random.SystemRandom()
+    index = lucky_rng.randrange(len(pool))
     row = pool.iloc[index]
     weekday = _weekday_zh(signal_date)
     ticker = str(row.get("ticker", "") or "").strip()
     name = str(row.get("name", "") or "").strip()
     stock = _format_stock_display(ticker, name)
-    tagline = _lucky_pick_tagline(signal_date, ticker, stock=stock, weekday=weekday)
-    return f"小彩蛋：{tagline}"
+    return _lucky_pick_tagline(stock=stock, weekday=weekday, rng=lucky_rng)
 
 
-def _lucky_pick_tagline(signal_date: str, ticker: str, *, stock: str, weekday: str) -> str:
+def _lucky_pick_tagline(*, stock: str, weekday: str, rng: random.Random | None = None) -> str:
     if not LUCKY_PICK_TAGLINES:
         return f"{weekday}的幸運觀察是 {stock}，先看一眼，手不要比腦快。"
-    digest = hashlib.sha256(f"{signal_date}|{ticker}|tagline".encode("utf-8")).hexdigest()
-    index = int(digest[:8], 16) % len(LUCKY_PICK_TAGLINES)
+    lucky_rng = rng or random.SystemRandom()
+    index = lucky_rng.randrange(len(LUCKY_PICK_TAGLINES))
     template = LUCKY_PICK_TAGLINES[index]
     return template.format(weekday=weekday, stock=stock)
 
