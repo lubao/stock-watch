@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,7 @@ from stock_watch.cli.weekly_review import build_short_gate_tuning_draft
 from stock_watch.cli.weekly_review import filter_recent_signal_dates
 from stock_watch.cli import quality_value
 from stock_watch.cli import report_sync
+from stock_watch.strategy import scenario as strategy_scenario
 from stock_watch.workflows.daily_watchlist import run_daily_watchlist
 from stock_watch.workflows.portfolio import run_default_portfolio_check
 from verification.reports.summarize_outcomes import summarize_outcomes
@@ -43,13 +45,58 @@ QUALITY_VALUE_CANDIDATE_REVIEW_CSV = THEME_OUTDIR / "quality_value_candidate_rev
 QUALITY_VALUE_CANDIDATE_REVIEW_MD = THEME_OUTDIR / "quality_value_candidate_review.md"
 QUALITY_VALUE_NEW_ADDITIONS_TRACKING_CSV = THEME_OUTDIR / "quality_value_new_additions_tracking.csv"
 QUALITY_VALUE_NEW_ADDITIONS_TRACKING_MD = THEME_OUTDIR / "quality_value_new_additions_tracking.md"
-QUALITY_VALUE_NEW_ADDITION_TICKERS = ("3213.TWO", "3158.TWO", "6996.TWO", "3556.TWO", "6292.TWO")
+QUALITY_VALUE_NEW_ADDITION_TICKERS = (
+    "3356.TW",
+    "6556.TWO",
+    "6967.TWO",
+    "3213.TWO",
+    "3158.TWO",
+    "6996.TWO",
+    "3556.TWO",
+    "6292.TWO",
+)
 QUALITY_VALUE_TRIAL_LEDGER_CSV = THEME_OUTDIR / "quality_value_trial_ledger.csv"
 QUALITY_VALUE_TRIAL_LEDGER_MD = THEME_OUTDIR / "quality_value_trial_ledger.md"
 QUALITY_VALUE_TRIAL_TICKERS = ("3213.TWO",)
 DEFAULT_LOCAL_TELEGRAM_CHAT_IDS = "7758949915"
 DEFAULT_LIQUIDITY_POLICY = "per_bucket"
 REPO_CONFIG_JSON = REPO_ROOT / "config.json"
+ACTION_SUMMARY_BUCKET_KEYS = {
+    "action_trial_tickers",
+    "action_pullback_tickers",
+    "action_midlong_tickers",
+    "action_wait_strength_tickers",
+    "action_cooldown_tickers",
+    "action_low_liquidity_tickers",
+    "action_watch_tickers",
+}
+ACTION_SUMMARY_BUCKET_WEIGHTS = {
+    "action_cooldown_tickers": 100,
+    "action_low_liquidity_tickers": 95,
+    "action_trial_tickers": 85,
+    "action_pullback_tickers": 75,
+    "action_midlong_tickers": 70,
+    "action_wait_strength_tickers": 55,
+    "action_watch_tickers": 30,
+}
+LUCKY_PICK_TAGLINES = (
+    "{weekday}幸運籤抽到 {stock}：一眼不看，心態自來。",
+    "{weekday}市場小紙條寫 {stock}：別人歐印我先等等，別人畢業我還在寫作業。",
+    "{weekday}扭蛋機吐出 {stock}：財富密碼先別急，可能只是鍵盤卡到。",
+    "{weekday}雷達嗶到 {stock}：不是叫你衝，是叫你假裝很懂地觀察。",
+    "{weekday}幸運席位給 {stock}：買點不到，先讓錢包冷靜一下。",
+    "{weekday}口袋名單冒出 {stock}：今天它負責上鏡，你負責不要手滑。",
+    "{weekday}小星星落在 {stock}：星象很好，帳戶密碼還是不要亂按。",
+    "{weekday}市場精靈指向 {stock}：牠只負責可愛，不負責停損。",
+    "{weekday}幸運觀察員報到 {stock}：看戲可以，搶戲母湯。",
+    "{weekday}提示卡翻到 {stock}：卡面寫著等好球，背面寫著別當韭菜。",
+    "{weekday}雷達釘上 {stock}：急著下手會扣幸運值，還會被市場笑。",
+    "{weekday}順眼標的是 {stock}：順眼不等於順手買，這不是交友軟體。",
+    "{weekday}彩蛋抽到 {stock}：請用望遠鏡觀察，不要用火箭筒進場。",
+    "{weekday}觀察幸運籤是 {stock}：籤王說耐心很難，但賠錢更難。",
+    "{weekday}市場便利貼貼上 {stock}：備註，慢慢看，比較像高手。",
+    "{weekday}限定觀察 {stock}：今天先當股市雲玩家，真的要動看清單。",
+)
 
 
 def _get_env_float(name: str, default: float) -> float:
@@ -319,16 +366,32 @@ def send_quality_value_notification(
     if not entry_plan_csv.exists() and not portfolio_report_md.exists() and not new_additions_tracking_csv.exists() and not trial_ledger_csv.exists():
         return
     notify_policy = _resolve_liquidity_policy_notify()
-    metrics = {
-        **_collect_quality_value_action_summary(entry_plan_csv, liquidity_policy_override=notify_policy),
-        **_collect_new_additions_action_summary(new_additions_tracking_csv),
-        **_collect_trial_ledger_action_summary(trial_ledger_csv),
-    }
-    if not any(metrics.values()):
-        return
+    metrics = _merge_action_summary_metrics(
+        _collect_quality_value_action_summary(entry_plan_csv, liquidity_policy_override=notify_policy),
+        _collect_new_additions_action_summary(new_additions_tracking_csv),
+        _collect_trial_ledger_action_summary(trial_ledger_csv),
+    )
     try:
         import daily_theme_watchlist
 
+        watchlist_summary: dict[str, list[str]] = {}
+        try:
+            daily_rank = _load_csv_safely(entry_plan_csv.parent / "daily_rank.csv")
+            if not daily_rank.empty:
+                market_regime = daily_theme_watchlist.get_market_regime()
+                us_market = daily_theme_watchlist.get_us_market_reference()
+                watchlist_summary = _collect_watchlist_action_summary(
+                    daily_rank,
+                    market_regime,
+                    us_market,
+                    daily_module=daily_theme_watchlist,
+                )
+                watchlist_summary.update(_collect_market_context_summary(daily_rank, market_regime, us_market))
+        except Exception:
+            watchlist_summary = {}
+        metrics = _merge_action_summary_metrics(metrics, watchlist_summary)
+        if not any(metrics.values()):
+            return
         full_chat_ids = list(getattr(daily_theme_watchlist, "TELEGRAM_CHAT_IDS", []) or [])
         simple_chat_ids = list(getattr(daily_theme_watchlist, "TELEGRAM_SIMPLE_CHAT_IDS", []) or [])
         if full_chat_ids:
@@ -342,6 +405,8 @@ def send_quality_value_notification(
 
 
 def build_simple_action_summary_notification(metrics: dict[str, object]) -> str:
+    header = _action_summary_header_lines(metrics, simple=True)
+
     def _section(label: str, key: str, *, price_label: str = "買") -> list[str]:
         values = metrics.get(key, [])
         if not isinstance(values, list):
@@ -354,6 +419,7 @@ def build_simple_action_summary_notification(metrics: dict[str, object]) -> str:
     sections = [
         _section("🟢 今天可小買：(小買試水溫，不重壓)", "action_trial_tickers", price_label="買"),
         _section("🟡 等便宜再買：(等回到買的位置，不追高)", "action_pullback_tickers", price_label="等買"),
+        _section("🧱 中長線布局：(波段倉，分批處理)", "action_midlong_tickers", price_label="買"),
         _section("⚪ 量縮先等：(已從可行動名單排除)", "action_low_liquidity_tickers", price_label="等量再說"),
     ]
     visible_sections: list[str] = []
@@ -365,10 +431,12 @@ def build_simple_action_summary_notification(metrics: dict[str, object]) -> str:
         visible_sections.extend(section)
     if not visible_sections:
         visible_sections = ["今天沒有新的可小買 / 等便宜買動作。"]
-    return "\n".join(["📌 今日可行動名單", "", *visible_sections])
+    return "\n".join(["📌 今日可行動名單", *header, "", *visible_sections])
 
 
 def build_action_summary_notification(metrics: dict[str, object]) -> str:
+    header = _action_summary_header_lines(metrics, simple=False)
+
     def _section(label: str, key: str, *, price_label: str = "買") -> list[str]:
         values = metrics.get(key, [])
         if not isinstance(values, list):
@@ -381,10 +449,11 @@ def build_action_summary_notification(metrics: dict[str, object]) -> str:
     sections = [
         _section("🟢 今天可小買：(小買試水溫，不重壓)", "action_trial_tickers", price_label="買"),
         _section("🟡 等便宜再買：(等回到買的位置，不追高)", "action_pullback_tickers", price_label="等買"),
+        _section("🧱 中長線布局：(波段倉，分批處理)", "action_midlong_tickers", price_label="買"),
         _section("⚪ 量縮先等：(交易量太低，先不動)", "action_low_liquidity_tickers", price_label="等量再說"),
         _section("🔵 等變強再買：(訊號還沒完整，等量價確認)", "action_wait_strength_tickers", price_label="等強再買"),
         _section("🔴 太熱別追：(漲幅或風險偏高，先等降溫)", "action_cooldown_tickers", price_label="別追，等"),
-        _section("🆕 新加入觀察：(剛進名單，先看能不能買)", "new_addition_action_tickers"),
+        _section("👀 備選觀察：(有訊號但不是今天主動作)", "action_watch_tickers", price_label="看"),
         _section("🧪 買後檢查：(已列試單，檢查變強或逃)", "trial_ledger_action_tickers"),
     ]
     visible_sections: list[str] = []
@@ -396,7 +465,124 @@ def build_action_summary_notification(metrics: dict[str, object]) -> str:
         visible_sections.extend(section)
     if not visible_sections:
         visible_sections = ["今天沒有新的可小買 / 等便宜買動作。"]
-    return "\n".join(["📌 今日動作摘要", "", *visible_sections])
+    return "\n".join(["📌 今日動作摘要", *header, "", *visible_sections])
+
+
+def _action_summary_header_lines(metrics: dict[str, object], *, simple: bool) -> list[str]:
+    key = "market_context_simple_lines" if simple else "market_context_lines"
+    values = metrics.get(key, [])
+    if not isinstance(values, list):
+        return []
+    lines = [str(value).strip() for value in values if str(value).strip()]
+    if not lines:
+        return []
+    return ["", *lines]
+
+
+def _merge_action_summary_metrics(*summaries: dict[str, object]) -> dict[str, object]:
+    action_candidates: dict[str, list[dict[str, object]]] = {key: [] for key in ACTION_SUMMARY_BUCKET_KEYS}
+    other_merged: dict[str, object] = {}
+    for summary in summaries:
+        for key, value in summary.items():
+            if isinstance(value, list):
+                if key in ACTION_SUMMARY_BUCKET_KEYS:
+                    for item in value:
+                        text = str(item).strip()
+                        if not text:
+                            continue
+                        action_candidates[key].append(
+                            {
+                                "key": key,
+                                "text": text,
+                                "ticker": _action_summary_ticker(text),
+                                "weight": _action_summary_weight(key, text),
+                            }
+                        )
+                    continue
+                bucket = other_merged.setdefault(key, [])
+                if not isinstance(bucket, list):
+                    continue
+                seen_items = {str(item).strip() for item in bucket}
+                for item in value:
+                    text = str(item).strip()
+                    if not text:
+                        continue
+                    if text in seen_items:
+                        continue
+                    bucket.append(text)
+                    seen_items.add(text)
+            elif value:
+                other_merged[key] = value
+            else:
+                other_merged.setdefault(key, value)
+
+    action_merged: dict[str, list[str]] = {key: [] for key in ACTION_SUMMARY_BUCKET_KEYS}
+    best_by_ticker: dict[str, dict[str, object]] = {}
+    untickered: list[dict[str, object]] = []
+    for candidates in action_candidates.values():
+        for candidate in candidates:
+            ticker = str(candidate.get("ticker", ""))
+            if not ticker:
+                untickered.append(candidate)
+                continue
+            existing = best_by_ticker.get(ticker)
+            if existing is None or float(candidate["weight"]) > float(existing["weight"]):
+                if existing is not None:
+                    candidate["text"] = _append_source_notes(str(candidate["text"]), str(existing["text"]))
+                best_by_ticker[ticker] = candidate
+            else:
+                existing["text"] = _append_source_notes(str(existing["text"]), str(candidate["text"]))
+
+    for candidate in [*best_by_ticker.values(), *untickered]:
+        key = str(candidate.get("key", ""))
+        if key not in action_merged:
+            continue
+        action_merged[key].append(str(candidate.get("text", "")))
+
+    for key, items in action_merged.items():
+        items.sort(key=lambda text: _action_summary_weight(key, text), reverse=True)
+
+    merged: dict[str, object] = {**other_merged, **action_merged}
+    return merged
+
+
+def _append_new_addition_note(existing: str, incoming: str) -> str:
+    match = re.search(r"新加入：[^｜]+", incoming)
+    if not match:
+        return existing
+    note = match.group(0)
+    if note in existing:
+        return existing
+    return f"{existing}｜{note}"
+
+
+def _append_source_notes(existing: str, incoming: str) -> str:
+    result = _append_new_addition_note(existing, incoming)
+    for pattern in [r"短線：[^｜]+", r"中長線：[^｜]+", r"短線備選：[^｜]+", r"中長線備選：[^｜]+"]:
+        match = re.search(pattern, incoming)
+        if match and match.group(0) not in result:
+            result = f"{result}｜{match.group(0)}"
+    return result
+
+
+def _action_summary_ticker(text: str) -> str:
+    match = re.search(r"\b([0-9A-Z]{2,8}\.(?:TW|TWO))\b", text)
+    return match.group(1) if match else ""
+
+
+def _action_summary_weight(key: str, text: str) -> float:
+    score = float(ACTION_SUMMARY_BUCKET_WEIGHTS.get(key, 0))
+    if "短線：" in text:
+        score += 8
+    if "中長線：" in text:
+        score += 6
+    if "新加入：" in text:
+        score += 4
+    if "短線備選：" in text or "中長線備選：" in text:
+        score -= 5
+    if "流動性低" in text or "量縮" in text:
+        score += 2 if key == "action_low_liquidity_tickers" else -8
+    return score
 
 
 def _count_csv_rows(path: Path) -> int:
@@ -1002,6 +1188,10 @@ def _plain_action_summary_terms(text: str) -> str:
         ("等拉回", "等便宜買"),
         ("等轉強", "等變強再買"),
         ("等待降溫", "太熱別追"),
+        ("續抱觀察", "先觀察"),
+        ("防守續抱", "防守續抱"),
+        ("續抱", "繼續看好"),
+        ("可分批", "可分批買"),
         ("移除試單", "逃"),
         ("移除審核", "先拿掉"),
         ("active_trial", "試買中"),
@@ -1127,7 +1317,7 @@ def _collect_quality_value_action_summary(
     def _is_low_turnover(df: pd.DataFrame) -> pd.Series:
         return _mask_low_turnover_bucket(df, turnover_hard_threshold_m)
 
-    def _liquidity_note(ticker: str, *, turnover_threshold_m: float) -> str:
+    def _liquidity_note(ticker: str, *, turnover_threshold_m: float, fallback: str = "流動性偏低") -> str:
         notes: list[str] = []
         turnover = turnover_by_ticker_m.get(ticker)
         if turnover is not None and turnover_threshold_m > 0 and turnover < turnover_threshold_m:
@@ -1135,7 +1325,7 @@ def _collect_quality_value_action_summary(
         ratio = volume_ratio_by_ticker.get(ticker)
         if ratio is not None and ratio < volume_ratio_threshold:
             notes.append(f"量縮 vr20={ratio:.2f}".rstrip("0").rstrip("."))
-        return "、".join(notes) or "流動性偏低"
+        return "、".join(notes) or fallback
 
     def _format_low_liquidity_items(df: pd.DataFrame, *, price_label: str, turnover_threshold_m: float) -> list[str]:
         if df.empty:
@@ -1214,7 +1404,11 @@ def _collect_quality_value_action_summary(
     formatter = _format_ticker_names
     if liquidity_policy in {"tag_only", "tags", "tag"}:
         note_by_ticker = {
-            str(ticker).strip(): _liquidity_note(str(ticker).strip(), turnover_threshold_m=tag_turnover_threshold_m)
+            str(ticker).strip(): _liquidity_note(
+                str(ticker).strip(),
+                turnover_threshold_m=tag_turnover_threshold_m,
+                fallback="",
+            )
             for ticker in set(work.get("ticker", pd.Series(dtype=str)).astype(str).tolist())
             if str(ticker).strip()
         }
@@ -1263,34 +1457,306 @@ def _collect_portfolio_action_summary(portfolio_report_md: Path) -> dict[str, li
 
 
 def _collect_new_additions_action_summary(new_additions_tracking_csv: Path) -> dict[str, list[str]]:
+    empty = {
+        "action_trial_tickers": [],
+        "action_pullback_tickers": [],
+        "action_wait_strength_tickers": [],
+        "action_cooldown_tickers": [],
+    }
     if not new_additions_tracking_csv.exists():
-        return {"new_addition_action_tickers": []}
+        return empty
     tracking = _load_csv_safely(new_additions_tracking_csv)
     if tracking.empty or "next_action" not in tracking.columns:
-        return {"new_addition_action_tickers": []}
+        return empty
     work = tracking.copy()
     if "rank" in work.columns:
         work["_rank"] = pd.to_numeric(work["rank"], errors="coerce").fillna(9999)
         work = work.sort_values(by=["_rank"], ascending=[True])
-    items: list[str] = []
+    buckets = {key: list(value) for key, value in empty.items()}
     for _, row in work.head(5).iterrows():
         ticker = str(row.get("ticker", "") or "").strip()
         name = str(row.get("name", "") or "").strip()
         action = str(row.get("next_action", "") or "").strip()
         if ticker:
             plain_action = _plain_action_summary_terms(action)
+            key = "action_wait_strength_tickers"
             price_label = "買"
-            if "等便宜買" in plain_action:
+            if "可小買" in plain_action:
+                key = "action_trial_tickers"
+            elif "等便宜買" in plain_action:
+                key = "action_pullback_tickers"
                 price_label = "等買"
             elif "等變強再買" in plain_action:
+                key = "action_wait_strength_tickers"
                 price_label = "等強再買"
-            elif "太熱別追" in plain_action:
+            elif "太熱別追" in plain_action or "先不追" in plain_action or "先拿掉" in plain_action:
+                key = "action_cooldown_tickers"
                 price_label = "別追，等"
             parts = [_format_stock_price_display(row, ticker=ticker, name=name, price_label=price_label)]
             if action:
-                parts.append(plain_action)
-            items.append("｜".join(parts))
-    return {"new_addition_action_tickers": items}
+                parts.append(f"新加入：{plain_action}")
+            buckets[key].append("｜".join(parts))
+    return buckets
+
+
+def _collect_watchlist_action_summary(
+    df_rank: pd.DataFrame,
+    market_regime: dict,
+    us_market: dict,
+    *,
+    daily_module: object,
+) -> dict[str, list[str]]:
+    empty = {
+        "action_trial_tickers": [],
+        "action_pullback_tickers": [],
+        "action_midlong_tickers": [],
+        "action_wait_strength_tickers": [],
+        "action_cooldown_tickers": [],
+        "action_watch_tickers": [],
+    }
+    if df_rank.empty:
+        return empty
+    try:
+        short_candidates, short_backups, midlong_candidates, midlong_backups = daily_module.build_candidate_sets(
+            df_rank,
+            market_regime,
+            us_market,
+        )
+    except Exception:
+        return empty
+
+    buckets = {key: list(value) for key, value in empty.items()}
+
+    def _append_rows(rows: pd.DataFrame, *, watch_type: str, source_label: str, limit: int) -> None:
+        if rows.empty:
+            return
+        for _, row in rows.head(limit).iterrows():
+            if watch_type == "short":
+                raw_action = str(daily_module.short_term_action_label(row))
+                key = _watchlist_short_action_bucket(raw_action, source_label=source_label)
+            else:
+                raw_action = str(daily_module.midlong_action_label(row))
+                key = _watchlist_midlong_action_bucket(raw_action, source_label=source_label)
+            item = _format_watchlist_action_item(
+                row,
+                watch_type=watch_type,
+                source_label=source_label,
+                raw_action=raw_action,
+                daily_module=daily_module,
+                market_regime=market_regime,
+                us_market=us_market,
+                df_rank=df_rank,
+            )
+            if item:
+                buckets[key].append(item)
+
+    _append_rows(short_candidates, watch_type="short", source_label="短線", limit=5)
+    _append_rows(midlong_candidates, watch_type="midlong", source_label="中長線", limit=5)
+    _append_rows(short_backups, watch_type="short", source_label="短線備選", limit=3)
+    _append_rows(midlong_backups, watch_type="midlong", source_label="中長線備選", limit=3)
+    return buckets
+
+
+def _collect_market_context_summary(
+    df_rank: pd.DataFrame,
+    market_regime: dict,
+    us_market: dict,
+) -> dict[str, list[str]]:
+    scenario = strategy_scenario.build_market_scenario(market_regime, us_market, df_rank)
+    market_comment = _compact_summary_text(str(market_regime.get("comment", "") or ""), limit=78)
+    us_summary = _compact_summary_text(str(us_market.get("summary", "") or ""), limit=72)
+    label = str(scenario.get("label", "") or "")
+    stance = str(scenario.get("stance", "") or "")
+    focus = _compact_summary_text(str(scenario.get("focus", "") or ""), limit=78)
+    exit_note = _compact_summary_text(str(scenario.get("exit_note", "") or ""), limit=78)
+    lucky_pick = _build_lucky_pick_line(df_rank)
+    lines = [
+        f"盤勢：{label}｜{stance}" if label or stance else "",
+        f"台股：{market_comment}" if market_comment else "",
+        f"美股：{us_summary}" if us_summary else "",
+        f"重點：{focus}" if focus else "",
+        f"出場：{exit_note}" if exit_note else "",
+        lucky_pick,
+    ]
+    simple_lines = [
+        f"盤勢：{_plain_market_scenario_label(label, stance)}",
+        f"外部：{_plain_us_market_bias(us_summary)}",
+        f"重點：{_plain_market_focus(label, focus)}",
+        lucky_pick,
+    ]
+    return {
+        "market_context_lines": [line for line in lines if line],
+        "market_context_simple_lines": [line for line in simple_lines if line],
+    }
+
+
+def _compact_summary_text(text: str, *, limit: int) -> str:
+    compact = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(limit - 1, 0)].rstrip() + "…"
+
+
+def _build_lucky_pick_line(df_rank: pd.DataFrame) -> str:
+    if df_rank.empty or "ticker" not in df_rank.columns:
+        return ""
+    work = df_rank.copy()
+    for col in ["rank", "setup_score", "risk_score", "ret5_pct", "ret20_pct"]:
+        if col in work.columns:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+    signals = work.get("signals", pd.Series(index=work.index, dtype=object)).fillna("").astype(str)
+    grade = work.get("grade", pd.Series(index=work.index, dtype=object)).fillna("").astype(str)
+    spec_label = work.get("spec_risk_label", pd.Series(index=work.index, dtype=object)).fillna("").astype(str)
+    positive_signal = signals.str.contains("REBREAK|TREND|ACCEL", regex=True)
+    not_too_hot = ~spec_label.eq("疑似炒作風險高")
+    mask = (
+        positive_signal
+        & grade.isin(["A", "B"])
+        & not_too_hot
+        & (work.get("setup_score", pd.Series(index=work.index, dtype=float)).fillna(0) >= 7)
+        & (work.get("risk_score", pd.Series(index=work.index, dtype=float)).fillna(99) <= 4)
+    )
+    pool = work[mask].copy()
+    if pool.empty:
+        return ""
+    if "rank" in pool.columns:
+        pool = pool.sort_values(by=["rank"], ascending=[True])
+    pool = pool.head(20).reset_index(drop=True)
+    signal_date = _lucky_pick_signal_date(pool)
+    tickers = "|".join(pool["ticker"].fillna("").astype(str).tolist())
+    digest = hashlib.sha256(f"{signal_date}|{tickers}".encode("utf-8")).hexdigest()
+    index = int(digest[:8], 16) % len(pool)
+    row = pool.iloc[index]
+    weekday = _weekday_zh(signal_date)
+    ticker = str(row.get("ticker", "") or "").strip()
+    name = str(row.get("name", "") or "").strip()
+    stock = _format_stock_display(ticker, name)
+    tagline = _lucky_pick_tagline(signal_date, ticker, stock=stock, weekday=weekday)
+    return f"小彩蛋：{tagline}"
+
+
+def _lucky_pick_tagline(signal_date: str, ticker: str, *, stock: str, weekday: str) -> str:
+    if not LUCKY_PICK_TAGLINES:
+        return f"{weekday}的幸運觀察是 {stock}，先看一眼，手不要比腦快。"
+    digest = hashlib.sha256(f"{signal_date}|{ticker}|tagline".encode("utf-8")).hexdigest()
+    index = int(digest[:8], 16) % len(LUCKY_PICK_TAGLINES)
+    template = LUCKY_PICK_TAGLINES[index]
+    return template.format(weekday=weekday, stock=stock)
+
+
+def _lucky_pick_signal_date(df: pd.DataFrame) -> str:
+    if "date" in df.columns:
+        values = df["date"].dropna().astype(str).str.strip()
+        values = values[values != ""]
+        if not values.empty:
+            return str(sorted(values.tolist())[-1])
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _weekday_zh(date_text: str) -> str:
+    try:
+        value = datetime.strptime(str(date_text)[:10], "%Y-%m-%d")
+    except Exception:
+        value = datetime.now()
+    names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    return names[value.weekday()]
+
+
+def _plain_market_scenario_label(label: str, stance: str) -> str:
+    label = str(label or "").strip()
+    stance = str(stance or "").strip()
+    if label == "高檔震盪盤":
+        return "偏多但高檔，邊做邊收。"
+    if label == "強勢延伸盤":
+        return "偏多延續，順勢但不追高。"
+    if label == "權值撐盤、個股轉弱":
+        return "大盤還撐著，但選股要更挑。"
+    if label == "明顯修正盤":
+        return "偏弱修正，先保守。"
+    if label == "盤中保守觀察":
+        return "盤中先觀察，等收盤確認。"
+    return f"{label}｜{stance}" if label or stance else "先看盤勢，不急著追。"
+
+
+def _plain_us_market_bias(summary: str) -> str:
+    text = re.sub(r"\s+", " ", str(summary or "")).strip()
+    if not text:
+        return "美股參考不足，先看台股自身強弱。"
+    if any(token in text for token in ["偏強", "正面", "走強", "續強"]):
+        return "美股偏正面，開盤情緒有支撐。"
+    if any(token in text for token in ["偏弱", "續殺", "轉弱", "壓力"]):
+        return "美股偏弱，早盤先保守。"
+    return "美股影響中性，重點看台股量價。"
+
+
+def _plain_market_focus(label: str, focus: str) -> str:
+    label = str(label or "").strip()
+    if label == "高檔震盪盤":
+        return "只挑買點舒服的，不追最熱的。"
+    if label == "強勢延伸盤":
+        return "可以順勢看，但等拉回比追高好。"
+    if label == "權值撐盤、個股轉弱":
+        return "看個股有沒有跟上，弱的先不要硬做。"
+    if label in {"明顯修正盤", "盤中保守觀察"}:
+        return "先守資金，等轉強訊號再出手。"
+    compact = _compact_summary_text(str(focus or ""), limit=36)
+    return compact or "先等清楚訊號。"
+
+
+def _watchlist_short_action_bucket(raw_action: str, *, source_label: str) -> str:
+    if source_label.endswith("備選"):
+        return "action_watch_tickers"
+    if raw_action in {"可追", "可小試"}:
+        return "action_trial_tickers"
+    if raw_action == "等拉回":
+        return "action_pullback_tickers"
+    if raw_action in {"只觀察不追", "開高不追", "分批落袋"}:
+        return "action_cooldown_tickers"
+    return "action_watch_tickers"
+
+
+def _watchlist_midlong_action_bucket(raw_action: str, *, source_label: str) -> str:
+    if source_label.endswith("備選"):
+        if raw_action in {"減碼觀察", "分批落袋"}:
+            return "action_cooldown_tickers"
+        return "action_watch_tickers"
+    if raw_action in {"續抱", "可分批", "防守續抱"}:
+        return "action_midlong_tickers"
+    if raw_action in {"減碼觀察", "分批落袋"}:
+        return "action_cooldown_tickers"
+    return "action_watch_tickers"
+
+
+def _format_watchlist_action_item(
+    row: pd.Series,
+    *,
+    watch_type: str,
+    source_label: str,
+    raw_action: str,
+    daily_module: object,
+    market_regime: dict,
+    us_market: dict,
+    df_rank: pd.DataFrame,
+) -> str:
+    ticker = str(row.get("ticker", "") or "").strip()
+    name = str(row.get("name", "") or "").strip()
+    if not ticker and not name:
+        return ""
+    try:
+        price_plan = daily_module.watch_price_plan_text(
+            row,
+            watch_type,
+            market_regime=market_regime,
+            us_market=us_market,
+            df_rank=df_rank,
+        )
+    except Exception:
+        price_plan = ""
+    action = _plain_action_summary_terms(raw_action)
+    parts = [_format_stock_display(ticker, name), f"{source_label}：{action}"]
+    if price_plan:
+        parts.append(str(price_plan).replace(" / ", "｜"))
+    return "｜".join(parts)
 
 
 def _collect_trial_ledger_action_summary(trial_ledger_csv: Path) -> dict[str, list[str]]:
@@ -1968,6 +2434,7 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
     portfolio_summary = _collect_portfolio_action_summary(theme_outdir / "portfolio_report.md")
     new_additions_summary = _collect_new_additions_action_summary(theme_outdir / "quality_value_new_additions_tracking.csv")
     trial_ledger_summary = _collect_trial_ledger_action_summary(theme_outdir / "quality_value_trial_ledger.csv")
+    combined_action_summary = _merge_action_summary_metrics(action_summary, new_additions_summary, trial_ledger_summary)
     snapshots_df = _load_csv_safely(snapshots_csv)
     outcomes_df = _load_csv_safely(outcomes_csv)
     verification_gate = build_data_quality_gate(outcomes_df, snapshots_df)
@@ -2047,10 +2514,8 @@ def collect_status_metrics(theme_outdir: Path = THEME_OUTDIR, verification_outdi
         "spec_risk_high_rows": int(spec_risk_metrics["spec_risk_high_rows"]),
         "spec_risk_watch_rows": int(spec_risk_metrics["spec_risk_watch_rows"]),
         "spec_risk_top_tickers": list(spec_risk_metrics["spec_risk_top_tickers"]),
-        **action_summary,
+        **combined_action_summary,
         **portfolio_summary,
-        **new_additions_summary,
-        **trial_ledger_summary,
     }
 
 
@@ -2121,7 +2586,6 @@ def render_local_status_markdown(
             f"- 量縮先等: `{', '.join(metrics.get('action_low_liquidity_tickers', [])) or 'n/a'}`",
             f"- 等轉強: `{', '.join(metrics.get('action_wait_strength_tickers', [])) or 'n/a'}`",
             f"- 過熱先等: `{', '.join(metrics.get('action_cooldown_tickers', [])) or 'n/a'}`",
-            f"- 新A追蹤: `{', '.join(metrics.get('new_addition_action_tickers', [])) or 'n/a'}`",
             f"- 試單追蹤: `{', '.join(metrics.get('trial_ledger_action_tickers', [])) or 'n/a'}`",
             f"- 持股分批落袋: `{', '.join(metrics.get('portfolio_trim_tickers', [])) or 'n/a'}`",
             "",
@@ -2245,7 +2709,11 @@ def main(argv: list[str] | None = None) -> int:
     sync_watchlist_report = args.sync_watchlist_report if args.sync_watchlist_report is not None else args.mode in {"portfolio", "postclose", "full"}
 
     step_runners = {
-        "watchlist": lambda: run_daily_watchlist(force_run=force_watchlist, success_scope=watchlist_success_scope),
+        "watchlist": lambda: run_daily_watchlist(
+            force_run=force_watchlist,
+            success_scope=watchlist_success_scope,
+            send_notifications=not bool(args.quality_value_notification),
+        ),
         "portfolio": run_portfolio_step,
         "verification": lambda: run_daily_verification.main(build_verification_argv(args)),
     }

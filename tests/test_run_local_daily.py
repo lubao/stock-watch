@@ -22,6 +22,11 @@ from stock_watch.cli.local_daily import parse_args
 from stock_watch.cli.local_daily import send_quality_value_notification
 from stock_watch.cli.local_daily import should_run_step
 from stock_watch.cli.local_daily import update_quality_value_tracking
+from stock_watch.cli.local_daily import _collect_new_additions_action_summary
+from stock_watch.cli.local_daily import _collect_watchlist_action_summary
+from stock_watch.cli.local_daily import _build_lucky_pick_line
+from stock_watch.cli.local_daily import LUCKY_PICK_TAGLINES
+from stock_watch.cli.local_daily import _merge_action_summary_metrics
 from stock_watch.cli.local_daily import write_quality_value_new_additions_tracking
 from stock_watch.cli.local_daily import write_quality_value_trial_ledger
 from stock_watch.cli.local_daily import write_shadow_open_not_chase_tracking_outputs
@@ -74,20 +79,27 @@ class RunLocalDailyTests(unittest.TestCase):
     def test_build_action_summary_notification_renders_action_lines(self) -> None:
         message = build_action_summary_notification(
             {
+                "market_context_lines": ["盤勢：高檔震盪盤｜邊做邊收", "重點：進場要更挑買點"],
                 "action_trial_tickers": ["6161.TWO 捷波"],
-                "action_pullback_tickers": ["3515.TW 華擎"],
+                "action_pullback_tickers": ["3515.TW 華擎", "3213.TWO 茂訊 可試單"],
+                "action_midlong_tickers": ["3014.TW 聯陽 中長線 續抱"],
                 "action_wait_strength_tickers": ["3005.TW 神基"],
                 "action_cooldown_tickers": ["2376.TW 技嘉"],
-                "new_addition_action_tickers": ["3213.TWO 茂訊 可試單"],
+                "action_watch_tickers": ["3231.TW 緯創 短線備選 續追蹤"],
                 "trial_ledger_action_tickers": ["3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究"],
                 "portfolio_trim_tickers": ["英業達 (2356)"],
             }
         )
 
         self.assertIn("📌 今日動作摘要", message)
+        self.assertIn("盤勢：高檔震盪盤｜邊做邊收", message)
+        self.assertIn("重點：進場要更挑買點", message)
         self.assertIn("🟢 今天可小買：(小買試水溫，不重壓)\n• 捷波 (6161.TWO)", message)
-        self.assertIn("🆕 新加入觀察：(剛進名單，先看能不能買)\n• 茂訊 (3213.TWO) 可小買", message)
+        self.assertIn("🟡 等便宜再買：(等回到買的位置，不追高)\n• 華擎 (3515.TW)\n• 茂訊 (3213.TWO) 可小買", message)
+        self.assertIn("🧱 中長線布局：(波段倉，分批處理)\n• 聯陽 (3014.TW) 中長線 繼續看好", message)
+        self.assertIn("👀 備選觀察：(有訊號但不是今天主動作)\n• 緯創 (3231.TW) 短線備選 續追蹤", message)
         self.assertIn("🧪 買後檢查：(已列試單，檢查變強或逃)\n• 茂訊 (3213.TWO) 試買中、風險偏高，買更小 第一筆可小買", message)
+        self.assertNotIn("新加入觀察", message)
         self.assertNotIn("active_trial", message)
         self.assertNotIn("risk_watch", message)
         self.assertNotIn("1/3", message)
@@ -98,6 +110,7 @@ class RunLocalDailyTests(unittest.TestCase):
     def test_build_simple_action_summary_notification_keeps_only_actionable_sections(self) -> None:
         message = build_simple_action_summary_notification(
             {
+                "market_context_simple_lines": ["盤勢：高檔震盪盤｜邊做邊收", "重點：進場要更挑買點"],
                 "action_trial_tickers": [
                     "6161.TWO 捷波｜買區 42.92–44｜停損 40.85",
                     "4995.TWO 晶達｜買區 44.41–45.5｜停損 42.26",
@@ -105,15 +118,16 @@ class RunLocalDailyTests(unittest.TestCase):
                     "3213.TWO 茂訊｜買區 111.92–114.5｜停損 106.42",
                 ],
                 "action_pullback_tickers": ["3515.TW 華擎｜買區 300–315｜停損 286"],
+                "action_midlong_tickers": ["3014.TW 聯陽｜買 133–161｜逃 117.7"],
                 "action_wait_strength_tickers": ["3005.TW 神基"],
                 "action_cooldown_tickers": ["2376.TW 技嘉"],
-                "new_addition_action_tickers": ["3213.TWO 茂訊 可試單"],
                 "trial_ledger_action_tickers": ["3213.TWO 茂訊 active_trial/risk_watch 第一筆 1/3 可研究"],
                 "portfolio_trim_tickers": ["英業達 (2356)"],
             }
         )
 
         self.assertIn("📌 今日可行動名單", message)
+        self.assertIn("盤勢：高檔震盪盤｜邊做邊收", message)
         self.assertIn("🟢 今天可小買：(小買試水溫，不重壓)\n• 捷波 (6161.TWO)｜買 42.92–44｜逃 40.85", message)
         self.assertIn("• 富鼎 (8261.TW)｜買 120.72–128｜逃 110.21", message)
         self.assertNotIn("可可買區", message)
@@ -560,6 +574,160 @@ class RunLocalDailyTests(unittest.TestCase):
         self.assertTrue(tracking_csv_exists)
         self.assertTrue(tracking_md_exists)
 
+    def test_collect_new_additions_action_summary_merges_into_action_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tracking_csv = Path(tmpdir) / "quality_value_new_additions_tracking.csv"
+            pd.DataFrame(
+                [
+                    {
+                        "ticker": "3213.TWO",
+                        "name": "茂訊",
+                        "rank": 11,
+                        "close": 114.5,
+                        "next_action": "可試單",
+                        "buy_zone_low": 111.92,
+                        "buy_zone_high": 114.50,
+                        "stop_loss": 106.42,
+                    },
+                    {
+                        "ticker": "6292.TWO",
+                        "name": "迅德",
+                        "rank": 3,
+                        "close": 57.0,
+                        "next_action": "先不追",
+                        "buy_zone_low": 48.31,
+                        "buy_zone_high": 50.94,
+                        "stop_loss": 45.05,
+                    },
+                ]
+            ).to_csv(tracking_csv, index=False)
+
+            result = _collect_new_additions_action_summary(tracking_csv)
+
+        self.assertEqual(result["action_pullback_tickers"], [])
+        self.assertIn("茂訊", result["action_trial_tickers"][0])
+        self.assertIn("新加入：可小買", result["action_trial_tickers"][0])
+        self.assertIn("迅德", result["action_cooldown_tickers"][0])
+        self.assertIn("新加入：先不追", result["action_cooldown_tickers"][0])
+
+    def test_merge_action_summary_metrics_keeps_existing_bucket_and_adds_new_addition_note(self) -> None:
+        result = _merge_action_summary_metrics(
+            {
+                "action_low_liquidity_tickers": [
+                    "3158.TWO 嘉實｜等量再說 89.82–90.38｜逃 87.5｜流動性低 to20=1.6M"
+                ],
+                "action_wait_strength_tickers": [],
+            },
+            {
+                "action_wait_strength_tickers": [
+                    "3158.TWO 嘉實｜現價 88.3｜等強再買 89.82–90.38｜逃 87.5｜新加入：等變強再買"
+                ],
+            },
+        )
+
+        self.assertEqual(result["action_wait_strength_tickers"], [])
+        self.assertIn("流動性低", result["action_low_liquidity_tickers"][0])
+        self.assertIn("新加入：等變強再買", result["action_low_liquidity_tickers"][0])
+
+    def test_merge_action_summary_metrics_uses_weights_for_final_bucket(self) -> None:
+        result = _merge_action_summary_metrics(
+            {
+                "action_trial_tickers": ["5299.TWO 杰力｜買 88–92｜逃 83"],
+                "action_cooldown_tickers": [],
+            },
+            {
+                "action_cooldown_tickers": ["5299.TWO 杰力｜別追，等 88–92｜逃 83｜短線：太熱別追"],
+            },
+        )
+
+        self.assertEqual(result["action_trial_tickers"], [])
+        self.assertIn("杰力", result["action_cooldown_tickers"][0])
+        self.assertIn("短線：太熱別追", result["action_cooldown_tickers"][0])
+
+    def test_collect_watchlist_action_summary_maps_short_and_midlong_into_shared_buckets(self) -> None:
+        short = pd.DataFrame([{"ticker": "5347.TWO", "name": "世界"}])
+        midlong = pd.DataFrame([{"ticker": "3014.TW", "name": "聯陽"}])
+        short_backup = pd.DataFrame([{"ticker": "3231.TW", "name": "緯創"}])
+        midlong_backup = pd.DataFrame([{"ticker": "3711.TW", "name": "日月光投控"}])
+
+        class FakeDailyModule:
+            @staticmethod
+            def build_candidate_sets(df_rank, market_regime, us_market):
+                return short, short_backup, midlong, midlong_backup
+
+            @staticmethod
+            def short_term_action_label(row):
+                return "等拉回" if row["ticker"] == "5347.TWO" else "續追蹤"
+
+            @staticmethod
+            def midlong_action_label(row):
+                return "續抱" if row["ticker"] == "3014.TW" else "分批落袋"
+
+            @staticmethod
+            def watch_price_plan_text(row, watch_type, **kwargs):
+                return "買 10 / 賣 12 / 逃 9"
+
+        result = _collect_watchlist_action_summary(
+            pd.DataFrame([{"ticker": "seed"}]),
+            {},
+            {},
+            daily_module=FakeDailyModule,
+        )
+
+        self.assertIn("世界", result["action_pullback_tickers"][0])
+        self.assertIn("短線：等便宜買", result["action_pullback_tickers"][0])
+        self.assertIn("聯陽", result["action_midlong_tickers"][0])
+        self.assertIn("中長線：繼續看好", result["action_midlong_tickers"][0])
+        self.assertIn("緯創", result["action_watch_tickers"][0])
+        self.assertIn("日月光投控", result["action_cooldown_tickers"][0])
+
+    def test_build_lucky_pick_line_uses_positive_pool_and_date(self) -> None:
+        df = pd.DataFrame(
+            [
+                {
+                    "date": "2026-05-13",
+                    "ticker": "9999.TW",
+                    "name": "過熱股",
+                    "grade": "A",
+                    "setup_score": 12,
+                    "risk_score": 8,
+                    "signals": "TREND,ACCEL",
+                    "spec_risk_label": "疑似炒作風險高",
+                    "rank": 1,
+                },
+                {
+                    "date": "2026-05-13",
+                    "ticker": "2330.TW",
+                    "name": "台積電",
+                    "grade": "A",
+                    "setup_score": 8,
+                    "risk_score": 1,
+                    "signals": "TREND",
+                    "spec_risk_label": "正常",
+                    "rank": 2,
+                },
+            ]
+        )
+
+        line = _build_lucky_pick_line(df)
+
+        self.assertIn("星期三", line)
+        self.assertIn("台積電 (2330.TW)", line)
+        self.assertIn("小彩蛋：", line)
+        self.assertNotIn("趨勢還站得住", line)
+        self.assertNotIn("過熱股", line)
+
+    def test_lucky_pick_tagline_pool_has_enough_safe_variants(self) -> None:
+        self.assertGreaterEqual(len(LUCKY_PICK_TAGLINES), 10)
+        self.assertLessEqual(len(LUCKY_PICK_TAGLINES), 20)
+        self.assertTrue(all("{stock}" in template for template in LUCKY_PICK_TAGLINES))
+        self.assertTrue(all("{weekday}" in template for template in LUCKY_PICK_TAGLINES))
+        self.assertTrue(all("{signal}" not in template for template in LUCKY_PICK_TAGLINES))
+        self.assertTrue(
+            any(token in template for token in ["不追價", "不漂亮", "衝動", "好球帶", "紀律"])
+            for template in LUCKY_PICK_TAGLINES
+        )
+
     def test_write_quality_value_trial_ledger_tracks_active_simulated_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             ledger_csv = Path(tmpdir) / "quality_value_trial_ledger.csv"
@@ -916,7 +1084,7 @@ class RunLocalDailyTests(unittest.TestCase):
             code = main(["--mode", "preopen", "--force-watchlist"])
 
         self.assertEqual(code, 0)
-        mock_watchlist.assert_called_once_with(force_run=True, success_scope="preopen")
+        mock_watchlist.assert_called_once_with(force_run=True, success_scope="preopen", send_notifications=False)
 
     def test_main_forces_watchlist_for_postclose_mode(self) -> None:
         with patch("stock_watch.cli.local_daily.run_daily_watchlist", return_value=0) as mock_watchlist, patch(
@@ -930,7 +1098,7 @@ class RunLocalDailyTests(unittest.TestCase):
             code = main(["--mode", "postclose"])
 
         self.assertEqual(code, 0)
-        mock_watchlist.assert_called_once_with(force_run=True, success_scope="postclose")
+        mock_watchlist.assert_called_once_with(force_run=True, success_scope="postclose", send_notifications=False)
 
     def test_main_portfolio_mode_auto_syncs_watchlist_report_by_default(self) -> None:
         calls: list[str] = []
@@ -1033,7 +1201,7 @@ class RunLocalDailyTests(unittest.TestCase):
             verification_outdir.mkdir(parents=True, exist_ok=True)
 
             write_status = write_local_status_dashboard
-            watchlist_calls: list[tuple[bool, str | None]] = []
+            watchlist_calls: list[tuple[bool, str | None, bool]] = []
             verification_modes: list[str] = []
 
             def _write_watchlist_outputs(tag: str) -> None:
@@ -1046,8 +1214,8 @@ class RunLocalDailyTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-            def _watchlist(*, force_run: bool, success_scope: str | None) -> int:
-                watchlist_calls.append((force_run, success_scope))
+            def _watchlist(*, force_run: bool, success_scope: str | None, send_notifications: bool = True) -> int:
+                watchlist_calls.append((force_run, success_scope, send_notifications))
                 _write_watchlist_outputs(success_scope or "watchlist")
                 return 0
 
@@ -1107,7 +1275,7 @@ class RunLocalDailyTests(unittest.TestCase):
 
         self.assertEqual(preopen_code, 0)
         self.assertEqual(postclose_code, 0)
-        self.assertEqual(watchlist_calls, [(False, "preopen"), (True, "postclose")])
+        self.assertEqual(watchlist_calls, [(False, "preopen", False), (True, "postclose", False)])
         self.assertEqual(verification_modes, ["preopen", "postclose"])
         self.assertEqual(payload["mode"], "postclose")
         self.assertEqual(payload["overall_status"], "ok")

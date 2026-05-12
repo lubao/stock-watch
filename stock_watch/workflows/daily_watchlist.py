@@ -190,7 +190,12 @@ def _save_reports(daily_theme_watchlist, df_rank, market_regime: dict, bt_steady
     )
 
 
-def run_daily_watchlist(*, force_run: bool | None = False, success_scope: str | None = None) -> int:
+def run_daily_watchlist(
+    *,
+    force_run: bool | None = False,
+    success_scope: str | None = None,
+    send_notifications: bool = True,
+) -> int:
     daily_theme_watchlist = _load_legacy_daily_workflow()
     main_started = time.perf_counter()
     effective_force_run = daily_theme_watchlist.FORCE_RUN if force_run is None else bool(force_run)
@@ -330,7 +335,7 @@ def run_daily_watchlist(*, force_run: bool | None = False, success_scope: str | 
             market_regime,
             us_market,
         )
-        if should_send:
+        if should_send and send_notifications:
 
             def _send_notifications() -> None:
                 simple_chat_ids = list(getattr(daily_theme_watchlist, "TELEGRAM_SIMPLE_CHAT_IDS", []) or [])
@@ -366,6 +371,8 @@ def run_daily_watchlist(*, force_run: bool | None = False, success_scope: str | 
 
             _timed_call(step_timings, "notifications", _send_notifications)
             daily_theme_watchlist.logger.info("Notification sent.")
+        elif should_send:
+            daily_theme_watchlist.logger.info("Notification suppressed by caller.")
         else:
             daily_theme_watchlist.logger.info("No notification sent.")
 
