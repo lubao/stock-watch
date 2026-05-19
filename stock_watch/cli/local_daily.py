@@ -8,6 +8,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -24,6 +25,8 @@ from stock_watch.workflows.daily_watchlist import run_daily_watchlist
 from stock_watch.workflows.portfolio import run_default_portfolio_check
 from verification.reports.summarize_outcomes import summarize_outcomes
 from verification.workflows import run_daily_verification
+
+LOCAL_TZ = ZoneInfo("Asia/Taipei")
 
 LOCAL_STATUS_MD = THEME_OUTDIR / "local_run_status.md"
 LOCAL_STATUS_JSON = THEME_OUTDIR / "local_run_status.json"
@@ -1661,6 +1664,10 @@ def _build_lucky_pick_line(df_rank: pd.DataFrame, *, rng: random.Random | None =
     index = lucky_rng.randrange(len(pool))
     row = pool.iloc[index]
     weekday = _weekday_zh(signal_date)
+    today_local = datetime.now(tz=LOCAL_TZ).strftime("%Y-%m-%d")
+    signal_day = str(signal_date)[:10]
+    if signal_day and signal_day != today_local:
+        weekday = f"{weekday}（資料日 {signal_day}）"
     ticker = str(row.get("ticker", "") or "").strip()
     name = str(row.get("name", "") or "").strip()
     stock = _format_stock_display(ticker, name)

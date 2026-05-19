@@ -212,6 +212,7 @@ runs/theme_watchlist_daily/**
 !runs/theme_watchlist_daily/README.md
 runs/artifact_backups/
 runs/verification/watchlist_daily/
+runs/scheduler/
 
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
