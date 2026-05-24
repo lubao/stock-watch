@@ -66,7 +66,8 @@ class RunLocalWebsiteTests(unittest.TestCase):
             (theme_outdir / "weekly_review.json").write_text(json.dumps({"generated_at": "2026-04-27"}), encoding="utf-8")
             (theme_outdir / "local_run_status.md").write_text("# Local Run Status\n- Overall: `ok`\n", encoding="utf-8")
             (theme_outdir / "weekly_review.md").write_text("# Weekly Review\n- Status: `ok`\n", encoding="utf-8")
-            (theme_outdir / "shadow_open_not_chase_tracking.md").write_text("# 開高不追 Daily Tracking\n", encoding="utf-8")
+            (theme_outdir / "shadow_open_not_chase_tracking.md").write_text("# 短線候補 Daily Tracking\n", encoding="utf-8")
+            (theme_outdir / "manual_short_trial_ledger.md").write_text("# Manual Short Trial Ledger\n", encoding="utf-8")
             (theme_outdir / "daily_report.md").write_text("# Daily Watchlist\n", encoding="utf-8")
             (verification_outdir / "outcomes_summary.md").write_text("# Outcomes Summary\n", encoding="utf-8")
             pd.DataFrame(
@@ -104,6 +105,20 @@ class RunLocalWebsiteTests(unittest.TestCase):
             pd.DataFrame(
                 columns=["signal_date", "ticker", "shadow_eligible", "outcome_status_1d"]
             ).to_csv(theme_outdir / "shadow_open_not_chase_tracking.csv", index=False)
+            pd.DataFrame(
+                [
+                    {
+                        "decision_date": "2026-05-24",
+                        "ticker": "2356.TW",
+                        "name": "英業達",
+                        "planned_unit": "1/3",
+                        "max_entry_price": 59.5,
+                        "hard_stop_price": 56.53,
+                        "next_check_date": "2026-05-25",
+                        "decision_state": "manual_trial_approved",
+                    }
+                ]
+            ).to_csv(theme_outdir / "manual_short_trial_ledger.csv", index=False)
 
             index_path = write_local_website(outdir=site_dir, theme_outdir=theme_outdir, verification_outdir=verification_outdir)
             content = index_path.read_text(encoding="utf-8")
@@ -128,7 +143,10 @@ class RunLocalWebsiteTests(unittest.TestCase):
         self.assertIn("2330.TW", content)
         self.assertIn("Local Run Status", content)
         self.assertIn("Outcomes Summary", content)
-        self.assertIn("Shadow 開高不追 Tracking", content)
+        self.assertIn("Shadow 短線候補 Tracking", content)
+        self.assertIn("Manual Short Trial Ledger", content)
+        self.assertIn("Manual Short Trial Preview", content)
+        self.assertIn("2356.TW", content)
         self.assertIn("views/daily_report.md.html", content)
         self.assertNotIn("../daily_report.md", content)
         self.assertFalse(root_compat_exists)

@@ -8,8 +8,9 @@
   - `run_weekly_review.py` 現在可以產出 `Candidate Mix Guidance`、`Candidate Expansion Targets` (By Group/By Layer) 以及 `Watchlist Gap Snapshot` 等報表。
   - 根據 draft proposals，已在 2026-04-26 對 `watchlist.csv` 完成一波積極的擴池 (新增 7 檔標的，包含 `satellite`、`theme` 與 `core`)。
 - **Short Gate 觀察線 (Shadow Observation)** 已上線：
-  - 目前針對短線 `below_threshold` 中表現極佳的 `開高不追` 動作，已實作隔離的影子觀察線 (`shadow_open_not_chase_candidates.csv` 與 `.md`)。
-  - 這條觀察線不影響正式推播與正式候選排序，僅在 `強勢延伸盤 / 高檔震盪盤` 且 `hot` market、`spec_risk_bucket == normal` 時進行記錄與驗證。
+  - 目前針對短線 `below_threshold` 中的 `開高不追` 與 `只觀察不追`，已實作隔離的影子觀察線 (`shadow_open_not_chase_candidates.csv` 與 `.md`)。
+  - 這條觀察線不影響正式推播與正式候選排序；`開高不追` 只在 `強勢延伸盤 / 高檔震盪盤` 且 `hot` market、`spec_risk_bucket == normal` 時標為 eligible。
+  - `只觀察不追` 維持 manual-only：不自動升格、不自動推播；若人工點名，單筆上限 `<= 1/3 test position` 並需明確停損。
 
 ## 2) Deep-Dive Insights for Strategy Tuning (深度分析建議)
 基於 2026-04-27 的數據探鑽，以下為給 Codex 的具體策略優化方向：

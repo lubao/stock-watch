@@ -14,6 +14,7 @@ from stock_watch.cli.weekly_review import build_atr_exit_policy_segment_simulati
 from stock_watch.cli.weekly_review import build_candidate_expansion_plan
 from stock_watch.cli.weekly_review import build_candidate_fill_directions
 from stock_watch.cli.weekly_review import build_candidate_source_plan
+from stock_watch.cli.weekly_review import build_manual_trial_guardrail
 from stock_watch.cli.weekly_review import build_short_gate_tuning_draft
 from stock_watch.cli.weekly_review import build_watchlist_gap_snapshot
 from stock_watch.cli.weekly_review import build_rank_candidate_source_summary
@@ -297,6 +298,44 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertFalse(draft["recent"]["promotion_ready"])
         self.assertEqual(draft["simulation"]["promoted_n"], 5)
         self.assertTrue(draft["contexts"])
+
+    def test_build_manual_trial_guardrail_keeps_observe_only_action_manual(self) -> None:
+        full_parts = {
+            "short_gate_promotion_watch": pd.DataFrame(
+                [
+                    {
+                        "horizon_days": 1,
+                        "watch_type": "short",
+                        "action": "只觀察不追",
+                        "below_n": 7,
+                        "ok_n": 50,
+                        "confidence": "medium",
+                        "delta_avg_ret_below_minus_ok": 2.5,
+                        "promotion_ready": True,
+                        "verdict": "watch_upgrade",
+                    },
+                    {
+                        "horizon_days": 5,
+                        "watch_type": "short",
+                        "action": "只觀察不追",
+                        "below_n": 5,
+                        "ok_n": 44,
+                        "confidence": "medium",
+                        "delta_avg_ret_below_minus_ok": 5.67,
+                        "promotion_ready": True,
+                        "verdict": "watch_upgrade",
+                    },
+                ]
+            )
+        }
+        recent_parts = {"short_gate_promotion_watch": pd.DataFrame()}
+
+        guardrail = build_manual_trial_guardrail(full_parts, recent_parts)
+
+        self.assertEqual(guardrail["status"], "manual_only")
+        self.assertEqual(guardrail["trial_cap"], "<= 1/3 test position")
+        self.assertTrue(any("不自動推播" in str(item) for item in guardrail["guardrails"]))
+        self.assertEqual(len(guardrail["historical"]), 2)
 
     def test_build_research_diagnostics_picks_factor_sensitivity_and_tail(self) -> None:
         parts = {
@@ -1189,6 +1228,7 @@ class RunWeeklyReviewTests(unittest.TestCase):
         self.assertIn("### Watchlist Gap Snapshot By Group", markdown)
         self.assertIn("### Watchlist Gap Snapshot By Source", markdown)
         self.assertIn("## 開高不追 Tuning Draft", markdown)
+        self.assertIn("## Manual Trial Guardrail", markdown)
         self.assertIn("Confidence note", markdown)
         self.assertIn("## Overall By Spec Risk", markdown)
         self.assertIn("## Overall By Spec Subtype", markdown)

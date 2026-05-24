@@ -678,6 +678,9 @@ def _empty_shadow_open_not_chase_tracking_df() -> pd.DataFrame:
             "scenario_label",
             "market_heat",
             "spec_risk_bucket",
+            "shadow_target",
+            "manual_trial_cap",
+            "manual_trial_rule",
             "shadow_status",
             "shadow_eligible",
             "action_label",
@@ -710,7 +713,27 @@ def build_shadow_open_not_chase_tracking_df(
     else:
         shadow["shadow_eligible"] = False
     shadow["shadow_status"] = shadow.get("shadow_status", pd.Series(index=shadow.index, dtype=object)).fillna("").astype(str)
+    shadow["shadow_target"] = shadow.get("shadow_target", pd.Series(index=shadow.index, dtype=object)).fillna("").astype(str)
+    shadow["manual_trial_cap"] = shadow.get("manual_trial_cap", pd.Series(index=shadow.index, dtype=object)).fillna("").astype(str)
+    shadow["manual_trial_rule"] = shadow.get("manual_trial_rule", pd.Series(index=shadow.index, dtype=object)).fillna("").astype(str)
     shadow["action_label"] = shadow.get("action_label", pd.Series(index=shadow.index, dtype=object)).fillna("").astype(str)
+    fallback_target = shadow["shadow_target"].mask(shadow["shadow_target"] == "", shadow["action_label"])
+    shadow["manual_trial_cap"] = shadow["manual_trial_cap"].mask(
+        (shadow["manual_trial_cap"] == "") & fallback_target.eq("開高不追"),
+        "0%",
+    )
+    shadow["manual_trial_cap"] = shadow["manual_trial_cap"].mask(
+        (shadow["manual_trial_cap"] == "") & fallback_target.eq("只觀察不追"),
+        "<= 1/3 test position",
+    )
+    shadow["manual_trial_rule"] = shadow["manual_trial_rule"].mask(
+        (shadow["manual_trial_rule"] == "") & fallback_target.eq("開高不追"),
+        "只做 shadow，不試單",
+    )
+    shadow["manual_trial_rule"] = shadow["manual_trial_rule"].mask(
+        (shadow["manual_trial_rule"] == "") & fallback_target.eq("只觀察不追"),
+        "僅限人工點名；不得自動推播或自動升格",
+    )
 
     merged = shadow.copy()
     if outcomes_df is not None and not outcomes_df.empty and {"signal_date", "ticker", "horizon_days"}.issubset(set(outcomes_df.columns)):
@@ -775,9 +798,9 @@ def render_shadow_open_not_chase_tracking_markdown(
     generated_at: str,
 ) -> str:
     lines = [
-        "# 開高不追 Daily Tracking",
+        "# 短線候補 Daily Tracking",
         f"- Generated: {generated_at}",
-        "- Scope: `開高不追` / `1D short` / shadow-only daily tracking",
+        "- Scope: `開高不追` + `只觀察不追` / `1D short` / shadow-only daily tracking",
     ]
     if recent_dates:
         lines.append(f"- Recent signal window: `{recent_dates[0]} -> {recent_dates[-1]}` (`{len(recent_dates)}` dates)")
@@ -840,6 +863,7 @@ def render_shadow_open_not_chase_tracking_markdown(
             "- `action_signal_dates >= 2`",
             "- `dominant_positive_share_pct <= 70`",
             "- recent `below-ok > 0`",
+            "- `只觀察不追` 只能進 shadow review；正式升格前需要人工決定，且單筆不得超過 1/3 試單",
             "- edge should not come only from `hot` + non-normal `spec_risk`",
             "",
         ]
@@ -853,8 +877,8 @@ def render_shadow_open_not_chase_tracking_markdown(
         [
             "## Daily Rows",
             "",
-            "| Signal Date | Ticker | Name | Rank | Scenario | Heat | Spec | Eligible | Status | 1D Outcome | 1D Ret |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Signal Date | Ticker | Name | Rank | Target | Scenario | Heat | Spec | Eligible | Status | Trial Cap | 1D Outcome | 1D Ret |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for _, row in tracking_df.iterrows():
@@ -862,9 +886,10 @@ def render_shadow_open_not_chase_tracking_markdown(
         ret_text = "" if pd.isna(ret_value) else f"{float(ret_value):.2f}%"
         lines.append(
             f"| {row.get('signal_date', '')} | {row.get('ticker', '')} | {row.get('name', '')} | "
-            f"{'' if pd.isna(row.get('rank')) else int(float(row.get('rank')))} | {row.get('scenario_label', '')} | "
+            f"{'' if pd.isna(row.get('rank')) else int(float(row.get('rank')))} | {row.get('shadow_target', '')} | {row.get('scenario_label', '')} | "
             f"{row.get('market_heat', '')} | {row.get('spec_risk_bucket', '')} | "
             f"{bool(row.get('shadow_eligible', False))} | {row.get('shadow_status', '')} | "
+            f"{row.get('manual_trial_cap', '')} | "
             f"{row.get('outcome_status_1d', '') or 'pending'} | {ret_text} |"
         )
     lines.append("")

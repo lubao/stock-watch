@@ -781,6 +781,76 @@ def build_short_gate_tuning_draft(
     return summary
 
 
+def build_manual_trial_guardrail(
+    full_parts: dict[str, pd.DataFrame],
+    recent_parts: dict[str, pd.DataFrame],
+    *,
+    target_action: str = "只觀察不追",
+) -> dict[str, object]:
+    full_watch = full_parts.get("short_gate_promotion_watch", pd.DataFrame())
+    recent_watch = recent_parts.get("short_gate_promotion_watch", pd.DataFrame())
+
+    def _action_rows(df: pd.DataFrame) -> list[dict[str, object]]:
+        if df is None or df.empty:
+            return []
+        work = df.copy()
+        work = work[
+            (work.get("watch_type", "").astype(str) == "short")
+            & (work.get("action", "").astype(str) == target_action)
+        ].copy()
+        if work.empty:
+            return []
+        for col in [
+            "horizon_days",
+            "below_n",
+            "ok_n",
+            "delta_avg_ret_below_minus_ok",
+            "delta_win_rate_below_minus_ok",
+        ]:
+            if col in work.columns:
+                work[col] = pd.to_numeric(work[col], errors="coerce")
+        work = work.sort_values(by=["horizon_days"], ascending=[True])
+        rows: list[dict[str, object]] = []
+        for _, row in work.iterrows():
+            rows.append(
+                {
+                    "horizon_days": int(row.get("horizon_days", 0) or 0),
+                    "below_n": int(row.get("below_n", 0) or 0),
+                    "ok_n": int(row.get("ok_n", 0) or 0),
+                    "confidence": str(row.get("confidence", "low")),
+                    "delta_avg_ret_below_minus_ok": round(float(row.get("delta_avg_ret_below_minus_ok", 0.0) or 0.0), 2),
+                    "promotion_ready": bool(row.get("promotion_ready", False)),
+                    "verdict": str(row.get("verdict", "")),
+                }
+            )
+        return rows
+
+    full_rows = _action_rows(full_watch)
+    recent_rows = _action_rows(recent_watch)
+    has_positive_edge = any(float(row.get("delta_avg_ret_below_minus_ok", 0.0) or 0.0) > 0 for row in full_rows)
+    has_review_signal = any(bool(row.get("promotion_ready", False)) for row in full_rows) or has_positive_edge
+
+    return {
+        "target_action": target_action,
+        "status": "manual_only" if has_review_signal else "hold",
+        "trial_cap": "<= 1/3 test position",
+        "why_now": (
+            f"`{target_action}` 的短線候補已有正向 shadow evidence，但樣本與 spec-risk 結構仍不足以自動升格。"
+            if has_review_signal
+            else f"`{target_action}` 尚未累積足夠 shadow evidence。"
+        ),
+        "proposal": "保留 shadow-only；只有人工點名時才允許 1/3 以下試單，不進正式 Telegram 自動推薦。",
+        "guardrails": [
+            "不改正式 short gate。",
+            "不自動推播成可買標的。",
+            "單筆最多 1/3 試單，且需明確停損。",
+            "若 spec_risk 不是 normal，視為高風險人工觀察，不得加碼。",
+        ],
+        "historical": full_rows,
+        "recent": recent_rows,
+    }
+
+
 def build_research_diagnostics(
     parts: dict[str, pd.DataFrame],
     full_parts: dict[str, pd.DataFrame],
@@ -2524,6 +2594,7 @@ def build_weekly_review_payload(
     candidate_fill_directions = build_candidate_fill_directions(rank_csv, candidate_source_plan)
     watchlist_gap_snapshot = build_watchlist_gap_snapshot(watchlist_csv, candidate_expansion_plan, candidate_source_plan)
     short_gate_tuning_draft = build_short_gate_tuning_draft(full_parts, parts)
+    manual_trial_guardrail = build_manual_trial_guardrail(full_parts, parts)
     research_diagnostics = build_research_diagnostics(parts, full_parts)
     data_quality_gate = build_data_quality_gate(outcomes, snapshots)
     recent_pullback_quality = build_pullback_quality_diagnostics(recent_outcomes)
@@ -2567,6 +2638,7 @@ def build_weekly_review_payload(
         "candidate_fill_directions": candidate_fill_directions,
         "watchlist_gap_snapshot": watchlist_gap_snapshot,
         "short_gate_tuning_draft": short_gate_tuning_draft,
+        "manual_trial_guardrail": manual_trial_guardrail,
         "research_diagnostics": research_diagnostics,
         "data_quality_gate": data_quality_gate,
     }
@@ -2635,6 +2707,7 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
     candidate_fill_directions = summary.get("candidate_fill_directions", {}) if isinstance(summary, dict) else {}
     watchlist_gap_snapshot = summary.get("watchlist_gap_snapshot", {}) if isinstance(summary, dict) else {}
     short_gate_tuning_draft = summary.get("short_gate_tuning_draft", {}) if isinstance(summary, dict) else {}
+    manual_trial_guardrail = summary.get("manual_trial_guardrail", {}) if isinstance(summary, dict) else {}
     research_diagnostics = summary.get("research_diagnostics", {}) if isinstance(summary, dict) else {}
     data_quality_gate = summary.get("data_quality_gate", {}) if isinstance(summary, dict) else {}
     top_subtype = spec_risk_overview.get("top_subtype", {}) if isinstance(spec_risk_overview, dict) else {}
@@ -2766,6 +2839,38 @@ def render_weekly_review_markdown(payload: dict[str, object]) -> str:
             )
     else:
         lines.append("- `_No tuning draft yet._`")
+
+    lines.extend(["", "## Manual Trial Guardrail", ""])
+    if isinstance(manual_trial_guardrail, dict) and manual_trial_guardrail:
+        lines.append(f"- Target: `{manual_trial_guardrail.get('target_action', '')}`")
+        lines.append(f"- Status: `{manual_trial_guardrail.get('status', 'hold')}`")
+        lines.append(f"- Trial Cap: `{manual_trial_guardrail.get('trial_cap', '')}`")
+        if manual_trial_guardrail.get("why_now"):
+            lines.append(f"- Why now: {manual_trial_guardrail.get('why_now', '')}")
+        if manual_trial_guardrail.get("proposal"):
+            lines.append(f"- Proposal: {manual_trial_guardrail.get('proposal', '')}")
+        for guardrail in manual_trial_guardrail.get("guardrails", []):
+            lines.append(f"- Guardrail: {guardrail}")
+        historical_rows = manual_trial_guardrail.get("historical", [])
+        recent_rows = manual_trial_guardrail.get("recent", [])
+        if historical_rows:
+            lines.append("- Historical evidence:")
+            for row in historical_rows:
+                lines.append(
+                    f"  - `{row.get('horizon_days', 0)}D`: `below_n={row.get('below_n', 0)}` / "
+                    f"`below-ok={row.get('delta_avg_ret_below_minus_ok', 0.0)}%` / "
+                    f"`promotion_ready={row.get('promotion_ready', False)}`"
+                )
+        if recent_rows:
+            lines.append("- Recent evidence:")
+            for row in recent_rows:
+                lines.append(
+                    f"  - `{row.get('horizon_days', 0)}D`: `below_n={row.get('below_n', 0)}` / "
+                    f"`below-ok={row.get('delta_avg_ret_below_minus_ok', 0.0)}%` / "
+                    f"`promotion_ready={row.get('promotion_ready', False)}`"
+                )
+    else:
+        lines.append("- `_No manual trial guardrail summary yet._`")
 
     lines.extend(["", "## Overall By Signal", _table_markdown(pd.DataFrame(tables.get("overall_by_signal", []))).rstrip(), ""])
     lines.extend(["## Threshold Delta", _table_markdown(pd.DataFrame(tables.get("weekly_threshold_delta", []))).rstrip(), ""])

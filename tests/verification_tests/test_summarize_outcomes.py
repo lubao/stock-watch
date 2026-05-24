@@ -81,6 +81,74 @@ class SummarizeOutcomesTests(unittest.TestCase):
         self.assertIn("overall_by_market_heat", parts)
         self.assertFalse(parts["overall_by_market_heat"].empty)
 
+    def test_threshold_fill_quality_splits_by_scenario_and_guard(self) -> None:
+        df = pd.DataFrame(
+            [
+                {
+                    "signal_date": "2026-04-17",
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "reco_status": "ok",
+                    "market_heat": "normal",
+                    "scenario_label": "高檔震盪盤",
+                    "action": "等拉回",
+                    "realized_ret_pct": 2.0,
+                    "status": "ok",
+                },
+                {
+                    "signal_date": "2026-04-17",
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "reco_status": "below_threshold",
+                    "market_heat": "normal",
+                    "scenario_label": "高檔震盪盤",
+                    "action": "續追蹤",
+                    "realized_ret_pct": -1.0,
+                    "status": "ok",
+                },
+                {
+                    "signal_date": "2026-04-18",
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "reco_status": "ok",
+                    "market_heat": "normal",
+                    "scenario_label": "明顯修正盤",
+                    "action": "等拉回",
+                    "realized_ret_pct": 0.0,
+                    "status": "ok",
+                },
+                {
+                    "signal_date": "2026-04-18",
+                    "horizon_days": 5,
+                    "watch_type": "short",
+                    "reco_status": "below_threshold",
+                    "market_heat": "normal",
+                    "scenario_label": "明顯修正盤",
+                    "action": "續追蹤",
+                    "realized_ret_pct": -3.0,
+                    "status": "ok",
+                },
+            ]
+        )
+        parts = summarize_outcomes(df)
+        self.assertFalse(parts["threshold_quality_by_scenario"].empty)
+        self.assertFalse(parts["threshold_quality_by_guard"].empty)
+        self.assertFalse(parts["threshold_quality_delta_by_scenario"].empty)
+        self.assertFalse(parts["threshold_quality_delta_by_guard"].empty)
+
+        guard_modes = set(parts["threshold_quality_by_guard"]["market_guard_mode"].astype(str).tolist())
+        self.assertIn("Caution", guard_modes)
+        self.assertIn("Crash Guard", guard_modes)
+
+        caution_delta = parts["threshold_quality_delta_by_guard"][
+            parts["threshold_quality_delta_by_guard"]["market_guard_mode"] == "Caution"
+        ].iloc[0]
+        self.assertEqual(float(caution_delta["delta_avg_ret_ok_minus_below"]), 3.0)
+
+        md = build_summary_markdown(df, source="test.csv", now_local=datetime(2026, 4, 20, tzinfo=LOCAL_TZ))
+        self.assertIn("## Threshold Fill Quality By Guard Mode", md)
+        self.assertIn("## Threshold Fill Delta By Scenario (ok - below_threshold)", md)
+
     def test_heat_bias_check_is_computed(self) -> None:
         df = pd.DataFrame(
             [

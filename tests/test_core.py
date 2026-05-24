@@ -100,6 +100,7 @@ class DetectRowTests(unittest.TestCase):
             [
                 {
                     "rank": 1,
+                    "date": "2026-05-22",
                     "ticker": "AAA.TW",
                     "name": "Alpha",
                     "group": "theme",
@@ -167,6 +168,7 @@ class DetectRowTests(unittest.TestCase):
             [
                 {
                     "rank": 1,
+                    "date": "2026-05-22",
                     "ticker": "AAA.TW",
                     "name": "Alpha",
                     "group": "theme",
@@ -2305,6 +2307,24 @@ class PushMessageTests(unittest.TestCase):
                     "spec_risk_label": "投機偏高",
                     "volatility_tag": "活潑",
                 },
+                {
+                    "rank": 3,
+                    "ticker": "CCC.TW",
+                    "name": "Gamma",
+                    "group": "theme",
+                    "layer": "short_attack",
+                    "grade": "A",
+                    "setup_score": 10,
+                    "risk_score": 3,
+                    "ret5_pct": 13.0,
+                    "ret20_pct": 18.0,
+                    "volume_ratio20": 2.2,
+                    "signals": "TREND,ACCEL",
+                    "rank_change": 0,
+                    "setup_change": 1,
+                    "spec_risk_label": "疑似炒作風險高",
+                    "volatility_tag": "活潑",
+                },
             ]
         )
         market_regime = {"ret20_pct": 12.0, "volume_ratio20": 1.1, "is_bullish": True, "session_phase": "postclose"}
@@ -2312,18 +2332,24 @@ class PushMessageTests(unittest.TestCase):
 
         out = dtw.build_open_not_chase_shadow_observations(df_rank, market_regime, us_market)
 
-        self.assertEqual(list(out["ticker"]), ["AAA.TW", "BBB.TW"])
+        self.assertEqual(list(out["ticker"]), ["AAA.TW", "CCC.TW", "BBB.TW"])
         self.assertEqual(str(out.iloc[0]["scenario_label"]), "高檔震盪盤")
         self.assertEqual(str(out.iloc[0]["market_heat"]), "hot")
         self.assertTrue(bool(out.iloc[0]["shadow_eligible"]))
         self.assertFalse(bool(out.iloc[1]["shadow_eligible"]))
-        self.assertIn("spec_risk 非 normal", str(out.iloc[1]["shadow_reason"]))
+        self.assertEqual(str(out.iloc[1]["shadow_status"]), "decision_required")
+        self.assertEqual(str(out.iloc[1]["manual_trial_cap"]), "<= 1/3 test position")
+        self.assertIn("人工點名", str(out.iloc[1]["manual_trial_rule"]))
+        self.assertIn("只觀察不追仍需人工決定", str(out.iloc[1]["shadow_reason"]))
+        self.assertFalse(bool(out.iloc[2]["shadow_eligible"]))
+        self.assertIn("spec_risk 非 normal", str(out.iloc[2]["shadow_reason"]))
 
     def test_save_open_not_chase_shadow_observations_writes_local_and_snapshot_files(self) -> None:
         df_rank = pd.DataFrame(
             [
                 {
                     "rank": 1,
+                    "date": "2026-05-22",
                     "ticker": "AAA.TW",
                     "name": "Alpha",
                     "group": "theme",
@@ -2367,6 +2393,7 @@ class PushMessageTests(unittest.TestCase):
         self.assertIn("AAA.TW", md)
         self.assertEqual(len(snap), 1)
         self.assertEqual(str(snap.iloc[0]["ticker"]), "AAA.TW")
+        self.assertEqual(str(snap.iloc[0]["signal_date"]), "2026-05-22")
 
     def test_save_open_not_chase_shadow_observations_writes_header_only_when_empty(self) -> None:
         df_rank = pd.DataFrame(

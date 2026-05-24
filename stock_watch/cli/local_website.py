@@ -33,8 +33,9 @@ def report_specs(theme_outdir: Path, verification_outdir: Path) -> tuple[tuple[s
         ("Feedback Sensitivity", verification_outdir / "feedback_weight_sensitivity.md", "Feedback-weight sensitivity across action labels."),
         ("Local Doctor", theme_outdir / "local_doctor.md", "Environment and local artifact health."),
         ("Local Housekeeping", theme_outdir / "local_housekeeping.md", "Generated-file cleanup and backup notes."),
-        ("Shadow 開高不追", theme_outdir / "shadow_open_not_chase.md", "Shadow-only action-level tuning candidates."),
-        ("Shadow 開高不追 Tracking", theme_outdir / "shadow_open_not_chase_tracking.md", "Daily tracking for the 開高不追 research line and promotion criteria progress."),
+        ("Shadow 短線候補", theme_outdir / "shadow_open_not_chase.md", "Shadow-only short-gate tuning candidates."),
+        ("Shadow 短線候補 Tracking", theme_outdir / "shadow_open_not_chase_tracking.md", "Daily tracking for short-gate research lines and promotion criteria progress."),
+        ("Manual Short Trial Ledger", theme_outdir / "manual_short_trial_ledger.md", "Human-approved 1/3 short-trial plan and guardrails."),
         ("Watchlist Additions", theme_outdir / "watchlist_addition_draft.md", "Next-wave watchlist expansion draft."),
         ("New Additions Priority", theme_outdir / "new_additions_priority.md", "Priority read for recently added names."),
         ("Local Runbook", REPO_ROOT / "docs" / "runbooks" / "LOCAL_RUNBOOK.md", "How to run the local daily workflow."),
@@ -62,6 +63,7 @@ def artifact_links(theme_outdir: Path, verification_outdir: Path) -> tuple[tuple
         ("Recommendation outcomes", verification_outdir / "reco_outcomes.csv"),
         ("Shadow candidates CSV", theme_outdir / "shadow_open_not_chase_candidates.csv"),
         ("Shadow tracking CSV", theme_outdir / "shadow_open_not_chase_tracking.csv"),
+        ("Manual short trial ledger CSV", theme_outdir / "manual_short_trial_ledger.csv"),
         ("Watchlist additions JSON", theme_outdir / "watchlist_addition_draft.json"),
     )
 
@@ -836,9 +838,14 @@ def build_site_html(*, outdir: Path, theme_outdir: Path, verification_outdir: Pa
         ["signal_date", "horizon_days", "watch_type", "ticker", "name", "reco_status", "action", "realized_ret_pct", "status"],
     )
     shadow_preview = render_csv_preview(
-        "Shadow 開高不追 Preview",
+        "Shadow 短線候補 Preview",
         load_csv_rows(theme_outdir / "shadow_open_not_chase_candidates.csv", limit=12),
-        ["rank", "ticker", "name", "scenario_label", "market_heat", "spec_risk_bucket", "shadow_eligible", "shadow_status"],
+        ["rank", "ticker", "name", "shadow_target", "scenario_label", "market_heat", "spec_risk_bucket", "shadow_eligible", "shadow_status", "manual_trial_cap"],
+    )
+    manual_trial_preview = render_csv_preview(
+        "Manual Short Trial Preview",
+        load_csv_rows(theme_outdir / "manual_short_trial_ledger.csv", limit=12),
+        ["decision_date", "ticker", "name", "planned_unit", "max_entry_price", "hard_stop_price", "next_check_date", "decision_state"],
     )
 
     report_library = render_report_library(outdir, theme_outdir, verification_outdir)
@@ -1020,6 +1027,7 @@ td {{ color: #dbe7ff; }}
   {daily_preview}
   {outcomes_preview}
   {shadow_preview}
+  {manual_trial_preview}
 
   <h2 id="reports" class="section-title">Report Library</h2>
   <section class="library-grid">{report_library}</section>

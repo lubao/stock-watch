@@ -92,6 +92,10 @@ def _empty_summary_parts() -> dict[str, pd.DataFrame]:
         "sensitivity_matrix": empty,
         "delta_ok_minus_below": empty,
         "delta_ok_minus_below_by_date": empty,
+        "threshold_quality_by_scenario": empty,
+        "threshold_quality_by_guard": empty,
+        "threshold_quality_delta_by_scenario": empty,
+        "threshold_quality_delta_by_guard": empty,
         "threshold_guard_check": empty,
         "short_threshold_diagnostics": empty,
         "short_gate_promotion_watch": empty,
@@ -108,6 +112,29 @@ def _empty_summary_parts() -> dict[str, pd.DataFrame]:
         "midlong_threshold_gate": empty,
         "spec_risk_check": empty,
     }
+
+
+def _infer_market_guard_mode_from_scenario(label: object) -> str:
+    normalized = str(label or "").strip()
+    if normalized == "明顯修正盤":
+        return "Crash Guard"
+    if normalized in {"盤中保守觀察", "權值撐盤、個股轉弱"}:
+        return "Defense"
+    if normalized == "高檔震盪盤":
+        return "Caution"
+    if normalized == "強勢延伸盤":
+        return "Normal"
+    return "unknown"
+
+
+def _normalize_market_guard_mode(df: pd.DataFrame) -> pd.Series:
+    if "market_guard_mode" in df.columns:
+        mode = df["market_guard_mode"].astype(str).str.strip()
+        mode = mode.mask(mode.isin(["", "b''", "nan", "None"]), "")
+    else:
+        mode = pd.Series("", index=df.index, dtype=object)
+    inferred = df.get("scenario_label", pd.Series("unknown", index=df.index)).map(_infer_market_guard_mode_from_scenario)
+    return mode.mask(mode == "", inferred).fillna("unknown").astype(str).str.strip().replace("", "unknown")
 
 
 def _aggregate_performance(df: pd.DataFrame, group_cols: list[str], sort_cols: list[str] | None = None) -> pd.DataFrame:
@@ -131,6 +158,53 @@ def _aggregate_performance(df: pd.DataFrame, group_cols: list[str], sort_cols: l
     if sort_cols:
         out = out.sort_values(by=sort_cols)
     return out
+
+
+def _build_threshold_quality_delta(summary: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+    if summary.empty:
+        return pd.DataFrame()
+    required = set(group_cols + ["reco_status", "n", "win_rate", "avg_ret", "med_ret", "min_ret"])
+    if not required.issubset(set(summary.columns)):
+        return pd.DataFrame()
+
+    base = summary[summary["reco_status"].isin(["ok", "below_threshold"])].copy()
+    if base.empty:
+        return pd.DataFrame()
+    ok = base[base["reco_status"] == "ok"].copy()
+    below = base[base["reco_status"] == "below_threshold"].copy()
+    merged = ok.merge(below, on=group_cols, how="inner", suffixes=("_ok", "_below"))
+    if merged.empty:
+        return pd.DataFrame()
+
+    min_n = pd.concat(
+        [
+            pd.to_numeric(merged["n_ok"], errors="coerce"),
+            pd.to_numeric(merged["n_below"], errors="coerce"),
+        ],
+        axis=1,
+    ).min(axis=1)
+    out = pd.DataFrame({col: merged[col] for col in group_cols})
+    out["ok_n"] = merged["n_ok"]
+    out["below_n"] = merged["n_below"]
+    out["min_n"] = min_n.astype("Int64")
+    out["confidence"] = [_confidence_label(int(x)) if pd.notna(x) else "low" for x in min_n.tolist()]
+    out["delta_win_rate_ok_minus_below"] = (
+        pd.to_numeric(merged["win_rate_ok"], errors="coerce")
+        - pd.to_numeric(merged["win_rate_below"], errors="coerce")
+    ).round(1)
+    out["delta_avg_ret_ok_minus_below"] = (
+        pd.to_numeric(merged["avg_ret_ok"], errors="coerce")
+        - pd.to_numeric(merged["avg_ret_below"], errors="coerce")
+    ).round(2)
+    out["delta_med_ret_ok_minus_below"] = (
+        pd.to_numeric(merged["med_ret_ok"], errors="coerce")
+        - pd.to_numeric(merged["med_ret_below"], errors="coerce")
+    ).round(2)
+    out["delta_min_ret_ok_minus_below"] = (
+        pd.to_numeric(merged["min_ret_ok"], errors="coerce")
+        - pd.to_numeric(merged["min_ret_below"], errors="coerce")
+    ).round(2)
+    return out.sort_values(by=group_cols).reset_index(drop=True)
 
 
 def build_midlong_threshold_gate(parts: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -1026,6 +1100,7 @@ def summarize_outcomes(outcomes: pd.DataFrame) -> dict[str, pd.DataFrame]:
         ] = "unknown"
     else:
         df["scenario_label"] = "unknown"
+    df["market_guard_mode"] = _normalize_market_guard_mode(df)
 
     df = apply_signal_template_labels(df, signal_col="signals", output_col="signal_template")
     df["signal_template"] = df["signal_template"].fillna("General").astype(str).str.strip()
@@ -1270,6 +1345,10 @@ def summarize_outcomes(outcomes: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
     delta_ok_minus_below = pd.DataFrame()
     delta_ok_minus_below_by_date = pd.DataFrame()
+    threshold_quality_by_scenario = pd.DataFrame()
+    threshold_quality_by_guard = pd.DataFrame()
+    threshold_quality_delta_by_scenario = pd.DataFrame()
+    threshold_quality_delta_by_guard = pd.DataFrame()
     heat_bias_check = pd.DataFrame()
     heat_bias_by_scenario = pd.DataFrame()
     heat_bias_by_date = pd.DataFrame()
@@ -1354,6 +1433,33 @@ def summarize_outcomes(outcomes: pd.DataFrame) -> dict[str, pd.DataFrame]:
         delta_ok_minus_below = pd.DataFrame()
         delta_ok_minus_below_by_date = pd.DataFrame()
         threshold_guard_check = pd.DataFrame()
+
+    try:
+        threshold_base = df[df["reco_status"].isin(["ok", "below_threshold"])].copy()
+        if not threshold_base.empty:
+            threshold_quality_by_scenario = _aggregate_performance(
+                threshold_base,
+                ["horizon_days", "watch_type", "scenario_label", "reco_status"],
+                ["horizon_days", "watch_type", "scenario_label", "reco_status"],
+            )
+            threshold_quality_by_guard = _aggregate_performance(
+                threshold_base,
+                ["horizon_days", "watch_type", "market_guard_mode", "reco_status"],
+                ["horizon_days", "watch_type", "market_guard_mode", "reco_status"],
+            )
+            threshold_quality_delta_by_scenario = _build_threshold_quality_delta(
+                threshold_quality_by_scenario,
+                ["horizon_days", "watch_type", "scenario_label"],
+            )
+            threshold_quality_delta_by_guard = _build_threshold_quality_delta(
+                threshold_quality_by_guard,
+                ["horizon_days", "watch_type", "market_guard_mode"],
+            )
+    except Exception:
+        threshold_quality_by_scenario = pd.DataFrame()
+        threshold_quality_by_guard = pd.DataFrame()
+        threshold_quality_delta_by_scenario = pd.DataFrame()
+        threshold_quality_delta_by_guard = pd.DataFrame()
 
     try:
         short_threshold_diagnostics = overall_by_action_status.copy()
@@ -1876,6 +1982,10 @@ def summarize_outcomes(outcomes: pd.DataFrame) -> dict[str, pd.DataFrame]:
         "sensitivity_matrix": sensitivity_matrix,
         "delta_ok_minus_below": delta_ok_minus_below,
         "delta_ok_minus_below_by_date": delta_ok_minus_below_by_date,
+        "threshold_quality_by_scenario": threshold_quality_by_scenario,
+        "threshold_quality_by_guard": threshold_quality_by_guard,
+        "threshold_quality_delta_by_scenario": threshold_quality_delta_by_scenario,
+        "threshold_quality_delta_by_guard": threshold_quality_delta_by_guard,
         "threshold_guard_check": threshold_guard_check,
         "short_threshold_diagnostics": short_threshold_diagnostics,
         "short_gate_promotion_watch": short_gate_promotion_watch,
@@ -2048,6 +2158,14 @@ def build_summary_markdown(
         lines.extend(["## Delta (ok - below_threshold) By Signal (all dates)", _table_markdown(parts["delta_ok_minus_below"]).rstrip(), ""])
     if not parts["delta_ok_minus_below_by_date"].empty:
         lines.extend(["## Delta (ok - below_threshold) By Signal Date (top 30)", _table_markdown(parts["delta_ok_minus_below_by_date"].head(30)).rstrip(), ""])
+    if not parts["threshold_quality_by_guard"].empty:
+        lines.extend(["## Threshold Fill Quality By Guard Mode", _table_markdown(parts["threshold_quality_by_guard"].head(80)).rstrip(), ""])
+    if not parts["threshold_quality_delta_by_guard"].empty:
+        lines.extend(["## Threshold Fill Delta By Guard Mode (ok - below_threshold)", _table_markdown(parts["threshold_quality_delta_by_guard"]).rstrip(), ""])
+    if not parts["threshold_quality_by_scenario"].empty:
+        lines.extend(["## Threshold Fill Quality By Scenario", _table_markdown(parts["threshold_quality_by_scenario"].head(80)).rstrip(), ""])
+    if not parts["threshold_quality_delta_by_scenario"].empty:
+        lines.extend(["## Threshold Fill Delta By Scenario (ok - below_threshold)", _table_markdown(parts["threshold_quality_delta_by_scenario"]).rstrip(), ""])
     if not parts["threshold_guard_check"].empty:
         lines.extend(["## Threshold Guard Check (ok - below_threshold)", _table_markdown(parts["threshold_guard_check"]).rstrip(), ""])
     else:

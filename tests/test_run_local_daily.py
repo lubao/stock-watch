@@ -1045,6 +1045,18 @@ class RunLocalDailyTests(unittest.TestCase):
                         "shadow_status": "eligible",
                         "shadow_eligible": True,
                         "action_label": "開高不追",
+                    },
+                    {
+                        "signal_date": "2026-05-04",
+                        "ticker": "9999.TW",
+                        "name": "人工觀察",
+                        "rank": 2,
+                        "scenario_label": "高檔震盪盤",
+                        "market_heat": "hot",
+                        "spec_risk_bucket": "high",
+                        "shadow_status": "decision_required",
+                        "shadow_eligible": False,
+                        "action_label": "只觀察不追",
                     }
                 ]
             ).to_csv(verification_outdir / "shadow_open_not_chase_snapshots.csv", index=False)
@@ -1087,11 +1099,14 @@ class RunLocalDailyTests(unittest.TestCase):
             markdown = (theme_outdir / "shadow_open_not_chase_tracking.md").read_text(encoding="utf-8")
             tracking_csv = pd.read_csv(theme_outdir / "shadow_open_not_chase_tracking.csv")
 
-        self.assertIn("開高不追 Daily Tracking", markdown)
+        self.assertIn("短線候補 Daily Tracking", markdown)
         self.assertIn("Promotion Criteria", markdown)
+        self.assertIn("不得超過 1/3 試單", markdown)
         self.assertIn("2026-05-04", markdown)
-        self.assertEqual(len(tracking_csv), 1)
+        self.assertEqual(len(tracking_csv), 2)
         self.assertEqual(str(tracking_csv.iloc[0]["ticker"]), "5386.TWO")
+        manual_row = tracking_csv[tracking_csv["ticker"].astype(str) == "9999.TW"].iloc[0]
+        self.assertEqual(str(manual_row["manual_trial_cap"]), "<= 1/3 test position")
 
     def test_main_runs_preopen_steps_in_order(self) -> None:
         calls: list[str] = []

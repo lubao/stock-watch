@@ -1449,6 +1449,8 @@ def _empty_shadow_open_not_chase_df() -> pd.DataFrame:
             "action_label",
             "shadow_target",
             "shadow_guardrail_scope",
+            "manual_trial_cap",
+            "manual_trial_rule",
             "shadow_eligible",
             "shadow_status",
             "shadow_reason",
@@ -1479,19 +1481,41 @@ def build_open_not_chase_shadow_observations(
         return _empty_shadow_open_not_chase_df()
 
     pool["action_label"] = pool.apply(short_term_action_label, axis=1)
-    pool = pool[pool["action_label"].astype(str) == "開高不追"].copy()
+    shadow_targets = {"開高不追", "只觀察不追"}
+    pool = pool[pool["action_label"].astype(str).isin(shadow_targets)].copy()
     if pool.empty:
         return _empty_shadow_open_not_chase_df()
 
     pool["scenario_label"] = str(scenario.get("label", ""))
     pool["market_heat"] = market_heat
     pool["spec_risk_bucket"] = pool.get("spec_risk_label", "").astype(str).apply(_shadow_spec_risk_bucket)
-    pool["shadow_target"] = "開高不追"
-    pool["shadow_guardrail_scope"] = "1D short only"
+    pool["shadow_target"] = pool["action_label"].astype(str)
+    pool["shadow_guardrail_scope"] = pool["action_label"].astype(str).map(
+        {
+            "開高不追": "1D short only",
+            "只觀察不追": "shadow-only; human decision required before live promotion",
+        }
+    ).fillna("shadow-only")
+    pool["manual_trial_cap"] = pool["action_label"].astype(str).map(
+        {
+            "開高不追": "0%",
+            "只觀察不追": "<= 1/3 test position",
+        }
+    ).fillna("0%")
+    pool["manual_trial_rule"] = pool["action_label"].astype(str).map(
+        {
+            "開高不追": "只做 shadow，不試單",
+            "只觀察不追": "僅限人工點名；不得自動推播或自動升格",
+        }
+    ).fillna("只做 shadow")
+    scenario_ok = pool["scenario_label"].astype(str).isin(["強勢延伸盤", "高檔震盪盤"])
+    heat_ok = pool["market_heat"].astype(str).eq("hot")
+    spec_normal = pool["spec_risk_bucket"].astype(str).eq("normal")
     pool["shadow_eligible"] = (
-        pool["scenario_label"].astype(str).isin(["強勢延伸盤", "高檔震盪盤"])
-        & pool["market_heat"].astype(str).eq("hot")
-        & pool["spec_risk_bucket"].astype(str).eq("normal")
+        pool["action_label"].astype(str).eq("開高不追")
+        & scenario_ok
+        & heat_ok
+        & spec_normal
     )
 
     def _shadow_reason(row: pd.Series) -> str:
@@ -1500,6 +1524,8 @@ def build_open_not_chase_shadow_observations(
             reasons.append("scenario 不在目標區")
         if str(row.get("market_heat", "")) != "hot":
             reasons.append("market_heat 非 hot")
+        if str(row.get("action_label", "")) == "只觀察不追":
+            reasons.append("只觀察不追仍需人工決定，暫不升格")
         if str(row.get("spec_risk_bucket", "")) != "normal":
             reasons.append("spec_risk 非 normal")
         if not reasons:
@@ -1507,9 +1533,14 @@ def build_open_not_chase_shadow_observations(
         return " / ".join(reasons)
 
     pool["shadow_reason"] = pool.apply(_shadow_reason, axis=1)
-    pool["shadow_status"] = pool["shadow_eligible"].map(lambda v: "eligible" if bool(v) else "observe_only")
+    pool["shadow_status"] = pool.apply(
+        lambda row: "eligible"
+        if bool(row.get("shadow_eligible", False))
+        else ("decision_required" if str(row.get("action_label", "")) == "只觀察不追" else "observe_only"),
+        axis=1,
+    )
     keep_cols = _empty_shadow_open_not_chase_df().columns.tolist()
-    return pool[keep_cols].sort_values(by=["shadow_eligible", "rank"], ascending=[False, True]).reset_index(drop=True)
+    return pool[keep_cols].sort_values(by=["shadow_eligible", "action_label", "rank"], ascending=[False, True, True]).reset_index(drop=True)
 
 
 def _upsert_shadow_open_not_chase_snapshots(path: Path, rows: pd.DataFrame) -> None:
@@ -1549,13 +1580,23 @@ def _upsert_shadow_open_not_chase_snapshots(path: Path, rows: pd.DataFrame) -> N
     merged.to_csv(path, index=False, encoding="utf-8")
 
 
+def _shadow_signal_date(df_rank: pd.DataFrame) -> str:
+    if df_rank is None or df_rank.empty or "date" not in df_rank.columns:
+        return today_local_str()
+    dates = df_rank["date"].dropna().astype(str).str.strip()
+    dates = dates[dates != ""]
+    if dates.empty:
+        return today_local_str()
+    return str(sorted(dates.tolist())[-1])
+
+
 def build_open_not_chase_shadow_markdown(df_shadow: pd.DataFrame) -> str:
     now_text = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
     lines = [
-        "# 開高不追 Shadow Observation",
+        "# 短線候補 Shadow Observation",
         f"- Generated: {now_text}",
         "- Scope: 只做影子觀察，不影響正式 short candidates / Telegram notifications。",
-        "- Experiment: `開高不追` / `1D short only` / shadow promotion watch",
+        "- Experiment: `開高不追` + `只觀察不追` / `1D short only` / shadow promotion watch",
         "",
     ]
     if df_shadow is None or df_shadow.empty:
@@ -1570,14 +1611,14 @@ def build_open_not_chase_shadow_markdown(df_shadow: pd.DataFrame) -> str:
             "",
             "## Candidates",
             "",
-            "| Rank | Ticker | Name | Scenario | Heat | Spec | Eligible | Reason | 5D | 20D | Signals |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Rank | Ticker | Name | Target | Scenario | Heat | Spec | Eligible | Status | Trial Cap | Reason | 5D | 20D | Signals |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for _, row in df_shadow.iterrows():
         lines.append(
-            f"| {int(row['rank'])} | {row['ticker']} | {row['name']} | {row['scenario_label']} | {row['market_heat']} | "
-            f"{row['spec_risk_bucket']} | {str(bool(row['shadow_eligible']))} | {row['shadow_reason']} | "
+            f"| {int(row['rank'])} | {row['ticker']} | {row['name']} | {row['shadow_target']} | {row['scenario_label']} | {row['market_heat']} | "
+            f"{row['spec_risk_bucket']} | {str(bool(row['shadow_eligible']))} | {row['shadow_status']} | {row['manual_trial_cap']} | {row['shadow_reason']} | "
             f"{row['ret5_pct']} | {row['ret20_pct']} | {row['signals']} |"
         )
     lines.append("")
@@ -1598,7 +1639,7 @@ def save_open_not_chase_shadow_observations(
     df_shadow.to_csv(SHADOW_OPEN_NOT_CHASE_CSV, index=False, encoding="utf-8-sig")
     snapshot_rows = df_shadow.copy()
     snapshot_rows.insert(0, "generated_at", datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S %Z"))
-    snapshot_rows.insert(1, "signal_date", today_local_str())
+    snapshot_rows.insert(1, "signal_date", _shadow_signal_date(df_rank))
     snapshot_rows["source"] = str(RANK_CSV)
     _upsert_shadow_open_not_chase_snapshots(SHADOW_OPEN_NOT_CHASE_SNAPSHOTS_CSV, snapshot_rows)
     return df_shadow
