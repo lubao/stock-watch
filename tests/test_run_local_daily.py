@@ -158,18 +158,22 @@ class RunLocalDailyTests(unittest.TestCase):
             {
                 "action_trial_tickers": ["2881.TW 富邦金｜買 108–110｜逃 104"],
                 "action_high_risk_reward_tickers": [
-                    "2495.TW 普安｜高風險高報酬｜HRR 71.2｜自動試單候選｜5D 16.5%、20D 28.1%｜hot_trend｜≤1/5 HRR試單｜總HRR≤1單位；破前低或1ATR停損"
+                    "2495.TW 普安｜高風險｜近5天 16.5%、近20天 28.1%｜hot_trend｜最多一般試單的五分之一｜轉弱就逃"
                 ],
                 "action_cooldown_tickers": ["2312.TW 金寶"],
             }
         )
 
         self.assertIn("🟢 可小買", message)
-        self.assertIn("🔥 高風險小試 Top 5：自動評分，倉位更小", message)
-        self.assertIn("普安 (2495.TW)｜高風險高報酬｜HRR 71.2", message)
-        self.assertIn("自動試單候選", message)
-        self.assertIn("≤1/5 HRR試單", message)
+        self.assertIn("🔥 高風險小試：漲很快，買更小", message)
+        self.assertIn("普安 (2495.TW)｜高風險｜近5天 16.5%、近20天 28.1%", message)
+        self.assertIn("近5天 16.5%、近20天 28.1%", message)
+        self.assertIn("最多一般試單的五分之一", message)
         self.assertNotIn("標準: 高投機風險 + 強動能報酬", message)
+        self.assertNotIn("HRR", message)
+        self.assertNotIn("ATR", message)
+        self.assertNotIn("系統分數", message)
+        self.assertNotIn("系統自動挑", message)
         self.assertIn("🟢 可小買：小買試水溫，不重壓\n• 富邦金 (2881.TW)", message)
 
     def test_collect_high_risk_reward_action_summary_reads_shadow_candidates(self) -> None:
@@ -214,10 +218,11 @@ class RunLocalDailyTests(unittest.TestCase):
 
         self.assertEqual(len(result["action_high_risk_reward_tickers"]), 1)
         self.assertIn("2495.TW 普安", result["action_high_risk_reward_tickers"][0])
-        self.assertIn("高風險高報酬", result["action_high_risk_reward_tickers"][0])
-        self.assertIn("HRR", result["action_high_risk_reward_tickers"][0])
-        self.assertIn("自動試單候選", result["action_high_risk_reward_tickers"][0])
-        self.assertIn("≤1/5 HRR試單", result["action_high_risk_reward_tickers"][0])
+        self.assertIn("高風險", result["action_high_risk_reward_tickers"][0])
+        self.assertIn("最多一般試單的五分之一", result["action_high_risk_reward_tickers"][0])
+        self.assertNotIn("HRR", result["action_high_risk_reward_tickers"][0])
+        self.assertNotIn("ATR", result["action_high_risk_reward_tickers"][0])
+        self.assertNotIn("系統分數", result["action_high_risk_reward_tickers"][0])
 
     def test_collect_high_risk_reward_action_summary_ranks_daily_top_five(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -249,12 +254,12 @@ class RunLocalDailyTests(unittest.TestCase):
         self.assertEqual(len(items), 5)
         self.assertIn("2407.TW 高風險7", items[0])
         self.assertIn("2403.TW 高風險3", items[-1])
-        self.assertTrue(all("HRR" in item and "自動試單候選" in item for item in items))
+        self.assertTrue(all("高風險" in item and "最多一般試單的五分之一" in item and "轉弱就逃" in item for item in items))
 
     def test_merge_prefers_high_risk_reward_over_generic_cooldown_for_same_ticker(self) -> None:
         merged = _merge_action_summary_metrics(
             {"action_cooldown_tickers": ["2495.TW 普安｜別追，等 40–42"]},
-            {"action_high_risk_reward_tickers": ["2495.TW 普安｜高風險高報酬｜自動試單候選"]},
+            {"action_high_risk_reward_tickers": ["2495.TW 普安｜高風險高報酬｜系統自動挑"]},
         )
 
         self.assertEqual(merged["action_cooldown_tickers"], [])

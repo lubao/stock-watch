@@ -87,8 +87,8 @@ ACTION_SUMMARY_BUCKET_WEIGHTS = {
 HIGH_RISK_REWARD_LIMIT = 5
 HIGH_RISK_REWARD_MIN_REWARD_SCORE = 45.0
 HIGH_RISK_REWARD_MIN_RISK_SCORE = 35.0
-HIGH_RISK_REWARD_TRIAL_CAP = "≤1/5 HRR試單"
-HIGH_RISK_REWARD_TRIAL_RULE = "總HRR≤1單位；破前低或1ATR停損"
+HIGH_RISK_REWARD_TRIAL_CAP = "最多一般試單的五分之一"
+HIGH_RISK_REWARD_TRIAL_RULE = "轉弱就逃"
 LUCKY_PICK_TAGLINES = (
     "{weekday}幸運籤抽到 {stock}：一眼不看，心態自來。",
     "{weekday}市場小紙條寫 {stock}：別人歐印我先等等，別人畢業我還在寫作業。",
@@ -458,7 +458,7 @@ def build_simple_action_summary_notification(metrics: dict[str, object]) -> str:
 
     sections = [
         _section("🟢 可小買：小買試水溫，不重壓", "action_trial_tickers", price_label="買"),
-        _section("🔥 高風險小試 Top 5：自動評分，倉位更小", "action_high_risk_reward_tickers", price_label="看", limit=HIGH_RISK_REWARD_LIMIT),
+        _section("🔥 高風險小試：漲很快，買更小", "action_high_risk_reward_tickers", price_label="看", limit=HIGH_RISK_REWARD_LIMIT),
         _section("🟡 等到價位再買：不要追高", "action_pullback_tickers", price_label="等買"),
         _section("🧱 中長線可分批：波段倉", "action_midlong_tickers", price_label="買"),
     ]
@@ -489,7 +489,7 @@ def build_action_summary_notification(metrics: dict[str, object]) -> str:
 
     sections = [
         _section("🟢 可小買：小買試水溫，不重壓", "action_trial_tickers", price_label="買"),
-        _section("🔥 高風險小試 Top 5：自動評分，倉位更小", "action_high_risk_reward_tickers", price_label="看"),
+        _section("🔥 高風險小試：漲很快，買更小", "action_high_risk_reward_tickers", price_label="看"),
         _section("🟡 等到價位再買：不要追高", "action_pullback_tickers", price_label="等買"),
         _section("🧱 中長線可分批：波段倉", "action_midlong_tickers", price_label="買"),
     ]
@@ -621,7 +621,7 @@ def _action_summary_ticker(text: str) -> str:
 def _action_summary_weight(key: str, text: str) -> float:
     score = float(ACTION_SUMMARY_BUCKET_WEIGHTS.get(key, 0))
     if key == "action_high_risk_reward_tickers":
-        match = re.search(r"HRR\s+([0-9]+(?:\.[0-9]+)?)", text)
+        match = re.search(r"(?:HRR|系統分數)\s+([0-9]+(?:\.[0-9]+)?)", text)
         if match:
             score += float(match.group(1)) / 10.0
         return score
@@ -1677,14 +1677,12 @@ def _collect_high_risk_reward_action_summary(
         ret20_value = row.get("ret20_pct")
         returns: list[str] = []
         if pd.notna(ret5_value):
-            returns.append(f"5D {float(ret5_value):.1f}%")
+            returns.append(f"近5天 {float(ret5_value):.1f}%")
         if pd.notna(ret20_value):
-            returns.append(f"20D {float(ret20_value):.1f}%")
+            returns.append(f"近20天 {float(ret20_value):.1f}%")
         heat = str(row.get("heat_policy_state", "") or "").strip()
         notes = [
-            "高風險高報酬",
-            f"HRR {float(row['_hrr_score']):.1f}",
-            "自動試單候選",
+            "高風險",
         ]
         if returns:
             notes.append("、".join(returns))
